@@ -7,7 +7,9 @@ Guidance for working on **The Horse's Trap Automator**, a Foundry VTT module for
 | Path | What it is |
 |---|---|
 | `module.json` | Foundry manifest: id `trap-automator`, version, compatibility (min 13, verified 14), packs, required modules. |
-| `scripts/trap-automator.js` | **All runtime code.** One `TrapAutomator` class plus `init`/`ready` hooks and the MATT/TokenBar hooks. Plain ES module with no build step and no dependencies. |
+| `scripts/trap-automator.js` | Main runtime code: the `TrapAutomator` class plus `init`/`ready` hooks and the MATT/TokenBar hooks. Imports `trap-manager.js`. Plain ES modules with no build step and no dependencies. |
+| `scripts/trap-manager.js` | `TrapManager` (ApplicationV2 + HandlebarsApplicationMixin), the **Trap Manager** settings menu for editing trap/cache types and their hint sets. |
+| `templates/trap-manager.hbs`, `styles/trap-automator.css` | Trap Manager template and styles (`styles` is declared in `module.json`). |
 | `definitions/builtin-defs.json` | Built-in trap and cache definitions (71 traps, 17 caches), fetched at `ready`. |
 | `packs/horses-actors/` | LevelDB compendium: `Hint +2/+4/+6/+10` (npc) and `Loot` (Item Piles actor). |
 | `packs/horses-macros/` | LevelDB compendium: `Trap Trigger` (legacy resolution macro, **no longer used**), `Clear Banked Perception`, `Clear Banked Stealth` (Stealthy helpers). |
@@ -18,7 +20,7 @@ There is no `package.json`, bundler, linter or test suite. What's in the repo sh
 ## Runtime flow
 
 1. Load time: `Hooks.on('setupTileActions')` registers the MATT action `trap-automator.spring` ("Spring Trap"). `Hooks.on('monks-tokenbar.updateRoll')` listens for finished roll requests.
-2. `init`: `TrapAutomator.registerSettings()` registers `customDefs` (world, Object), creates `game.trapAutomator` and registers the keybinding (default **Shift+T**, GM only).
+2. `init`: `TrapAutomator.registerSettings()` registers `customDefs` (world, Object) and the **Trap Manager** settings menu (`registerMenu('trap-automator', 'manager', { type: TrapManager, restricted: true })`), creates `game.trapAutomator` and registers the keybinding (default **Shift+T**, GM only).
 3. `ready`: fetches `modules/trap-automator/definitions/builtin-defs.json` into `builtinDefs`, then `rebuildDefinitions()` deep-merges it with `customDefs` and fills in the default triggers. Finally, the active GM runs `upgradeTrapTiles()`, which replaces old `runmacro` actions on trap tiles with the Spring Trap action and sets `restriction: 'all'`.
 4. Hotkey → `openInitialDialog()` → chain of dialogs (type → category/sub-category → trap → location → trigger → details). The choices build up in `this.currentData`. The details dialogs (`openTrapDetailsDialog` / `openCacheDetailsDialog`) collect the **Detection DC** and per-tier **hint DCs** (`_renderDetectionFields` / `_readDetectionFields`; defaults from `hintDCsFor()`: +2 → DC, +4 → DC+2, +6 → DC+4, +10 → DC+8). For traps they also collect the **attack type**: `save` (ability + DC + half) or `attack` (attack bonus).
 5. `promptDrawTile()` registers a one-shot `createTile` hook. `onTileCreated()` then:
@@ -46,7 +48,8 @@ Built by `buildTrapData()`: `name`, `type` (`trap`|`cache`), `flavor`, `detectio
   },
   "cache": { "<slug>": { "name": "…", "category": "…", "description": { "found": "…" }, "hints": { /* same shape */ } } },
   "triggers": { "<category>": ["step on a pressure plate", …] },   // customDefs only; defaults live in initializeDefaultTriggers()
-  "categories": { "<slug>": { "name": "<slug>", "primary": "<parent>" } } // customDefs only
+  "categories": { "<slug>": { "name": "<slug>", "primary": "<parent>" } }, // customDefs only
+  "hidden": { "trap": ["<key>", …], "cache": ["<key>", …] }            // customDefs only; dropped from definitions by rebuildDefinitions()
 }
 ```
 
@@ -64,6 +67,13 @@ Built by `buildTrapData()`: `name`, `type` (`trap`|`cache`), `flavor`, `detectio
 - Write custom definitions only through `saveCustomDefinitions()`, which rebuilds live definitions so deletions take effect immediately. Always `foundry.utils.duplicate()` the setting before mutating it.
 - Target Foundry **v13 and v14** APIs (`foundry.applications.api.*`, `foundry.utils.*`). Don't use globals that were deprecated in v12 or v13.
 - User-facing strings are currently inline English. When touching UI, prefer moving strings into `lang/en.json` with `game.i18n.localize`, but don't mix that into unrelated changes.
+
+## Trap Manager
+
+- `TrapManager` lists `builtinDefs[type]` plus `customDefs[type]`. Status is *builtin*, *modified* (a built-in with an override in `customDefs`) or *custom*. The effective definition is `mergeObject(builtin, override)`, the same way `rebuildDefinitions()` combines them: objects merge and arrays (hint sets) replace.
+- It edits a **draft** (`_draftFromDef`). Inputs carry `data-field` paths (for example `sets.0.+2` or `description.flavor`) and are copied into the draft on input, so re-renders keep unsaved text. `_buildDefinition` validates the draft and writes the same hint sets to all four locations (built-in hints are identical per location).
+- Every write goes through `automator.saveCustomDefinitions()`, so live definitions rebuild immediately. Hide/unhide edits `customDefs.hidden`; revert/delete removes `customDefs[type][key]`.
+- Actions are private static methods wired through `DEFAULT_OPTIONS.actions` (`this` is the app). Search filters the list in the DOM rather than re-rendering, so the input keeps focus.
 
 ## Working with the compendium packs
 
@@ -84,7 +94,7 @@ There are no automated tests. Test manually in Foundry:
 4. Move a token onto the tile (any token works). Roll from the TokenBar card (log in as a player in a second window to test the player side), and check that HP drops and the summary is posted.
 5. Useful console handles: `game.trapAutomator`, `game.trapAutomator.definitions`, `game.settings.get('trap-automator','customDefs')`.
 
-To check syntax without Foundry, run `node --check scripts/trap-automator.js`. To validate the JSON, run `node -e "require('./definitions/builtin-defs.json')"`.
+To check syntax without Foundry, run `node --check` on `scripts/trap-automator.js` and `scripts/trap-manager.js`. To validate the JSON, run `node -e "require('./definitions/builtin-defs.json')"`.
 
 ## Releasing
 

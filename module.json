@@ -17,6 +17,9 @@
   "esmodules": [
     "scripts/trap-automator.js"
   ],
+  "styles": [
+    "styles/trap-automator.css"
+  ],
   "languages": [
     {
       "lang": "en",

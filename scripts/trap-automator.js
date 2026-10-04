@@ -20,6 +20,9 @@
  */
 
 class TrapAutomator {
+  /** Name of the Monk's Active Tiles action registered by this module. */
+  static SPRING_ACTION = 'spring';
+
   constructor() {
     // Live state for the current creation workflow.
     this.currentData = {};
@@ -27,6 +30,8 @@ class TrapAutomator {
     // separately for traps and caches and include descriptions, default
     // saves and hint strings.
     this.definitions = { trap: {}, cache: {}, triggers: {} };
+    // TokenBar messages already resolved this session (see onTokenBarRollComplete).
+    this._resolvedMessages = new Set();
   }
 
   /**
@@ -74,18 +79,226 @@ class TrapAutomator {
       type: Object,
       default: {}
     });
+  }
 
-    // Register a setting to persist the macro UUID used when triggering
-    // traps or caches. When a GM selects a different macro via the
-    // "Select Macro" menu this value will be updated. The default is
-    // the provided macro id used in earlier versions of the module.
-    game.settings.register('trap-automator', 'macroId', {
-      name: 'Trap Automator Macro ID',
-      scope: 'world',
-      config: false,
-      type: String,
-      default: 'Macro.z9RXNw9fEKBIkxHW'
+  /**
+   * Resolve a document UUID, returning null instead of throwing for
+   * malformed or missing references. Uses the namespaced helper on v13+.
+   * @param {string} uuid Document UUID
+   * @returns {Promise<foundry.abstract.Document|null>}
+   */
+  static async safeFromUuid(uuid) {
+    if (!uuid) return null;
+    const resolve = foundry.utils?.fromUuid ?? globalThis.fromUuid;
+    try {
+      return (await resolve(uuid)) ?? null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * Register the "Spring Trap" action with Monk's Active Tiles. Trap tiles
+   * run this action when a token enters them; MATT executes tile actions on
+   * the GM client, so everything downstream (roll request, damage) runs
+   * with GM permissions.
+   * @param {Object} app The MonksActiveTiles class passed to setupTileActions
+   */
+  static registerTileActions(app) {
+    app.registerTileGroup('trap-automator', "The Horse's Trap Automator");
+    app.registerTileAction('trap-automator', TrapAutomator.SPRING_ACTION, {
+      name: 'Spring Trap',
+      ctrls: [],
+      group: 'trap-automator',
+      fn: async (args = {}) => {
+        const { tile, tokens = [] } = args;
+        await game.trapAutomator.springTrap(tile, tokens);
+        return {};
+      },
+      content: async () => '<span class="action-style">Spring Trap</span> <span class="details-style">(save via Monk\'s TokenBar, damage applied automatically)</span>'
     });
+  }
+
+  /**
+   * Spring the trap stored on a tile for the tokens that entered it. Posts a
+   * Monk's TokenBar saving throw request to chat so each token's owner (or
+   * the GM, for NPCs) rolls it from the card. The trap details travel with
+   * the request in the TokenBar message options, and damage is applied by
+   * onTokenBarRollComplete once every token has rolled.
+   * @param {TileDocument} tile The trap tile
+   * @param {TokenDocument[]} tokens Tokens that triggered the tile
+   */
+  async springTrap(tile, tokens) {
+    const trap = tile?.getFlag('trap-automator', 'trapData');
+    if (!trap || trap.type !== 'trap') return;
+    const api = game.MonksTokenBar;
+    if (!api?.requestRoll) {
+      ui.notifications.error("Trap Automator: Monk's TokenBar is not active, so the trap's saving throw can't be requested.");
+      return;
+    }
+    // TokenBar needs canvas Token objects, which only exist for the scene
+    // the GM is currently viewing.
+    const TokenClass = foundry.canvas?.placeables?.Token ?? globalThis.Token;
+    const targets = tokens.map(t => t?.object ?? t).filter(t => t?.actor && t instanceof TokenClass);
+    if (!targets.length) {
+      if (tokens.length) ui.notifications.warn(`Trap Automator: "${trap.name}" was triggered on a scene you aren't viewing, so the saving throw couldn't be requested.`);
+      return;
+    }
+    await api.requestRoll(targets, {
+      request: `save:${trap.saveType || 'dex'}`,
+      dc: trap.DC ?? trap.hiddenDC ?? 10,
+      showdc: false,
+      silent: true,
+      fastForward: false,
+      rollMode: 'roll',
+      name: trap.name,
+      flavor: trap.flavor,
+      trapAutomator: { tileUuid: tile.uuid, trap }
+    });
+  }
+
+  /**
+   * Handle a finished Monk's TokenBar roll request. TokenBar fires this hook
+   * once every token on the card has rolled, and again on any later update
+   * (re-rolls, reveals), so each message is only resolved once. Only the
+   * active GM applies damage.
+   * @param {Object} result TokenBar result: { dc, tokenresults: [{ uuid, passed, roll, name }] }
+   * @param {ChatMessage} message The TokenBar request message
+   */
+  async onTokenBarRollComplete(result, message) {
+    if (!game.users.activeGM?.isSelf) return;
+    const request = message?.getFlag('monks-tokenbar', 'options')?.trapAutomator;
+    if (!request?.trap) return;
+    if (this._resolvedMessages.has(message.id) || message.getFlag('trap-automator', 'resolved')) return;
+    this._resolvedMessages.add(message.id);
+    await message.setFlag('trap-automator', 'resolved', true);
+    await this.resolveTrapDamage(request.trap, result?.tokenresults ?? []);
+  }
+
+  /**
+   * Roll the trap's damage once and apply it to every token that rolled the
+   * save: full damage on a failure, half on a success if the trap allows it.
+   * Damage goes through the dnd5e actor API so resistances, immunities and
+   * temporary hit points are respected. Posts a summary to chat.
+   * @param {Object} trap Trap data built by buildTrapData()
+   * @param {Object[]} tokenResults TokenBar per-token results
+   */
+  async resolveTrapDamage(trap, tokenResults) {
+    const esc = foundry.utils.escapeHTML;
+    let damageRoll = null;
+    if (trap.damageFormula) {
+      try {
+        damageRoll = await new Roll(trap.damageFormula).evaluate();
+        await damageRoll.toMessage({
+          flavor: `${trap.name}: damage${trap.damageType ? ` (${trap.damageType})` : ''}`
+        });
+      } catch (err) {
+        console.error('Trap Automator: invalid damage formula', trap.damageFormula, err);
+        ui.notifications.error(`Trap Automator: "${trap.damageFormula}" is not a valid damage formula.`);
+        damageRoll = null;
+      }
+    }
+    const damageType = TrapAutomator.normalizeDamageType(trap.damageType);
+    const lines = [];
+    for (const res of tokenResults) {
+      const tokenDoc = await TrapAutomator.safeFromUuid(res.uuid);
+      const actor = tokenDoc?.actor ?? res.actor;
+      const passed = !!res.passed;
+      let amount = 0;
+      if (damageRoll) {
+        if (!passed) amount = damageRoll.total;
+        else if (trap.halfDamageOnSuccess) amount = Math.floor(damageRoll.total / 2);
+      }
+      if (amount > 0 && actor) {
+        try {
+          await TrapAutomator.applyDamage(actor, amount, damageType);
+        } catch (err) {
+          console.error(`Trap Automator: failed to apply damage to ${actor.name}`, err);
+          ui.notifications.error(`Trap Automator: couldn't apply damage to ${actor.name}. See console for details.`);
+        }
+      }
+      const name = esc(tokenDoc?.name ?? res.name ?? 'Unknown');
+      const text = esc(passed ? (trap.successText || '') : (trap.failText || ''));
+      const typeText = trap.damageType ? ` ${esc(trap.damageType)}` : '';
+      const dmg = damageRoll ? ` <em>(${amount > 0 ? `${amount}${typeText} damage` : 'no damage'})</em>` : '';
+      lines.push(`<li><strong>${name}</strong>: ${passed ? 'Success' : 'Failure'}. ${text}${dmg}</li>`);
+    }
+    if (!lines.length) return;
+    await ChatMessage.create({
+      speaker: { alias: trap.name },
+      content: `<p><strong>${esc(trap.name)}</strong></p><ul>${lines.join('')}</ul>`
+    });
+  }
+
+  /**
+   * Map a free-text damage type to a dnd5e damage type key, or null if the
+   * system doesn't know it. Accepts keys ("piercing") and labels.
+   * @param {string} type Damage type text from the trap
+   * @returns {string|null}
+   */
+  static normalizeDamageType(type) {
+    const types = globalThis.CONFIG?.DND5E?.damageTypes;
+    if (!type || !types) return null;
+    const wanted = String(type).trim().toLowerCase();
+    for (const [key, cfg] of Object.entries(types)) {
+      const label = typeof cfg === 'string' ? cfg : cfg?.label;
+      if (key === wanted || String(game.i18n.localize(label ?? '')).toLowerCase() === wanted) return key;
+    }
+    return null;
+  }
+
+  /**
+   * Apply damage to an actor. Uses dnd5e's typed damage API so resistances
+   * and immunities apply; an unknown type is applied as untyped damage.
+   * @param {Actor} actor Actor to damage
+   * @param {number} amount Damage before resistances
+   * @param {string|null} type dnd5e damage type key
+   */
+  static async applyDamage(actor, amount, type) {
+    if (typeof actor.applyDamage !== 'function') {
+      throw new Error(`Actor type "${actor.type}" has no applyDamage method`);
+    }
+    if (type) return actor.applyDamage([{ value: amount, type, properties: new Set() }]);
+    return actor.applyDamage(amount);
+  }
+
+  /**
+   * Upgrade trap tiles created by earlier versions. Those tiles ran a macro
+   * (usually one that didn't exist in the world) with the trap JSON as an
+   * argument. Replace those actions with the Spring Trap action, which reads
+   * the trap data stored on the tile, and clear the token restriction so GM
+   * and NPC tokens trigger traps too. Only the active GM runs this.
+   */
+  async upgradeTrapTiles() {
+    if (!game.users.activeGM?.isSelf) return;
+    const springKey = `trap-automator.${TrapAutomator.SPRING_ACTION}`;
+    let upgraded = 0;
+    for (const scene of game.scenes) {
+      const updates = [];
+      for (const tile of scene.tiles) {
+        if (tile.getFlag('trap-automator', 'trapData')?.type !== 'trap') continue;
+        const matt = tile.flags['monks-active-tiles'];
+        if (!matt || !Array.isArray(matt.actions)) continue;
+        if (!matt.actions.some(a => a?.action === 'runmacro')) continue;
+        const actions = matt.actions.map(a => (a?.action === 'runmacro'
+          ? { id: a.id ?? foundry.utils.randomID(), action: springKey, data: {} }
+          : a));
+        // MATT only restricts on 'gm' or 'player', so 'all' lets any token trigger it.
+        updates.push({
+          _id: tile.id,
+          'flags.monks-active-tiles.actions': actions,
+          'flags.monks-active-tiles.restriction': 'all'
+        });
+      }
+      if (updates.length) {
+        await scene.updateEmbeddedDocuments('Tile', updates);
+        upgraded += updates.length;
+      }
+    }
+    if (upgraded) {
+      console.log(`Trap Automator: upgraded ${upgraded} trap tile(s)`);
+      ui.notifications.info(`Trap Automator: upgraded ${upgraded} existing trap tile(s) to use Monk's TokenBar saves and automatic damage.`);
+    }
   }
 
   /**
@@ -320,12 +533,6 @@ class TrapAutomator {
           label: 'Edit Definitions',
           callback: () => {
             this.openEditDefinitionDialog();
-          }
-        },
-        selectMacro: {
-          label: 'Select Macro',
-          callback: () => {
-            this.openSelectMacroDialog();
           }
         },
         cancel: {
@@ -1106,67 +1313,6 @@ class TrapAutomator {
         cancel: { label: 'Cancel' }
       },
       default: 'create'
-    }).render(true);
-  }
-
-  /**
-   * Present a dialog allowing the GM to choose which macro should be
-   * executed when a trap or cache is triggered. Macros available to the
-   * current user are listed in a dropdown. Upon selection the chosen
-   * macro's UUID is stored in a world setting so that it persists
-   * across sessions and is used when creating new traps or caches. This
-   * feature is useful if the default macro id becomes invalid or if
-   * GMs wish to use a custom macro for trap resolution.
-   */
-  openSelectMacroDialog() {
-    // Gather macros accessible to the current user. Depending on Foundry
-    // version macros may be in game.macros.contents or game.macros.entities.
-    let macroDocs = [];
-    if (game.macros?.contents) {
-      macroDocs = game.macros.contents;
-    } else if (Array.isArray(game.macros)) {
-      macroDocs = game.macros;
-    } else if (game.macros?.entities) {
-      macroDocs = game.macros.entities;
-    }
-    // Build options list sorted by name. Include both name and id for clarity.
-    macroDocs = macroDocs.sort((a, b) => a.name.localeCompare(b.name));
-    const currentUuid = game.settings.get('trap-automator', 'macroId') || '';
-    const options = macroDocs.map(macro => {
-      const uuid = macro.uuid ?? `Macro.${macro.id}`;
-      const selected = uuid === currentUuid ? ' selected' : '';
-      const label = `${macro.name} (${uuid})`;
-      return `<option value="${uuid}"${selected}>${label}</option>`;
-    }).join('');
-    const content = `<form>
-      <div class="form-group">
-        <label for="ta-select-macro">Select macro:</label>
-        <select id="ta-select-macro" name="ta-select-macro" style="width:100%">
-          ${options}
-        </select>
-      </div>
-    </form>`;
-    TrapAutomator.makeDialog({
-      title: 'Select Macro',
-      content,
-      buttons: {
-        save: {
-          label: 'Save',
-          callback: async html => {
-            const uuid = html.find('#ta-select-macro').val();
-            if (!uuid) {
-              ui.notifications.warn('No macro selected.');
-              return;
-            }
-            await game.settings.set('trap-automator', 'macroId', uuid);
-            ui.notifications.info('Trap Automator: macro updated. New traps will use the selected macro.');
-          }
-        },
-        cancel: {
-          label: 'Cancel'
-        }
-      },
-      default: 'save'
     }).render(true);
   }
 
@@ -2393,9 +2539,9 @@ class TrapAutomator {
    * Callback invoked when the GM finishes drawing a tile. Builds the trap
    * data object, stores it as a flag on the tile and spawns hint tokens
    * around the tile. Traps additionally attach a Monk's Active Tile trigger
-   * that runs the resolution macro when a player enters the tile. Caches do
-   * not roll or trigger a macro at all — their data is stored on the tile as
-   * metadata only and the workflow simply spawns the four hint tokens.
+   * that runs the Spring Trap action when any token enters the tile. Caches
+   * do not roll at all — their data is stored on the tile as metadata only
+   * and the workflow simply spawns the four hint tokens.
    * @param {TileDocument} tileDoc The newly created tile document
    */
   async onTileCreated(tileDoc) {
@@ -2403,32 +2549,19 @@ class TrapAutomator {
     // Build hint strings for each difficulty based on location.
     const hints = this.getHints(trapData);
     // Assemble the tile flags. Both traps and caches store their data under
-    // the trap-automator flag for later inspection. Only traps also attach a
-    // Monk's Active Tile trigger; caches never run a macro.
+    // the trap-automator flag; the Spring Trap action reads it from there.
     const flags = { 'trap-automator': { trapData } };
     if (trapData.type === 'trap') {
-      // Prepare the macro trigger for Monk's Active Tile Triggers. Use the
-      // macro UUID chosen by the GM via settings, falling back to the default
-      // value. Wrap the JSON argument in quotes to prevent splitting on
-      // spaces and escape any double quotes inside the JSON.
-      const macroUuid = game.settings.get('trap-automator', 'macroId') || 'Macro.z9RXNw9fEKBIkxHW';
-      const rawJson = JSON.stringify(trapData);
-      const escaped = rawJson.replace(/"/g, '\\"');
-      const argString = `"${escaped}"`;
-      const action = {
-        id: foundry.utils.randomID(),
-        action: 'runmacro',
-        data: {
-          macroid: macroUuid,
-          args: argString,
-          runasgm: 'player'
-        }
-      };
+      // No token restriction: player, GM and NPC tokens all spring the trap.
       flags['monks-active-tiles'] = {
         trigger: 'enter',
         active: true,
-        restrictedTokens: 'players',
-        actions: [action]
+        restriction: 'all',
+        actions: [{
+          id: foundry.utils.randomID(),
+          action: `trap-automator.${TrapAutomator.SPRING_ACTION}`,
+          data: {}
+        }]
       };
     }
     // Write the tile flags in a single update.
@@ -2446,7 +2579,7 @@ class TrapAutomator {
       ui.notifications.error('Trap Automator: Failed to create hint tokens. See console for details.');
     }
     if (trapData.type === 'trap') {
-      ui.notifications.info('Trap created. Hint tokens have been placed and the tile will trigger the Trap Trigger macro when entered.');
+      ui.notifications.info('Trap created. Hint tokens have been placed; any token entering the tile springs the trap.');
     } else {
       ui.notifications.info('Cache created. Hint tokens have been placed around the tile.');
     }
@@ -2660,4 +2793,21 @@ Hooks.once('ready', async () => {
   } catch (err) {
     console.error('Trap Automator: error building definitions', err);
   }
+  // Move trap tiles from earlier versions onto the Spring Trap action.
+  try {
+    await game.trapAutomator.upgradeTrapTiles();
+  } catch (err) {
+    console.error('Trap Automator: error upgrading trap tiles', err);
+  }
+});
+
+// Register the Spring Trap tile action. Monk's Active Tiles fires this hook
+// during its own setup, so it is registered at load time rather than in init.
+Hooks.on('setupTileActions', app => TrapAutomator.registerTileActions(app));
+
+// Apply trap damage once Monk's TokenBar reports that every token has rolled.
+Hooks.on('monks-tokenbar.updateRoll', (result, message) => {
+  game.trapAutomator?.onTokenBarRollComplete(result, message).catch(err => {
+    console.error('Trap Automator: error resolving trap', err);
+  });
 });

@@ -1,0 +1,5 @@
+# LevelDB compendium packs must be byte-exact; CRLF conversion of CURRENT breaks them.
+packs/** binary
+
+# Keep text files LF in the repo.
+* text=auto eol=lf

@@ -41,8 +41,12 @@
     }
   ],
   "relationships": {
+    "systems": [
+      { "id": "dnd5e", "type": "system" }
+    ],
     "requires": [
       { "id": "monks-active-tiles", "type": "module" },
+      { "id": "monks-tokenbar", "type": "module" },
       { "id": "stealthy", "type": "module" }
     ]
   }

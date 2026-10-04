@@ -28,7 +28,7 @@ The current releases of Monk's Active Tile Triggers and Monk's TokenBar (14.x) r
 In Foundry's **Add-on Modules → Install Module**, paste this manifest URL:
 
 ```
-https://raw.githubusercontent.com/ryanw341/trap-automator/main/module.json
+https://raw.githubusercontent.com/RaxiroCA/trap-automator/main/module.json
 ```
 
 On **The Forge**, install it from the Bazaar. If the module doesn't show up in your world's *Manage Modules* list afterwards, make sure the world is running D&D 5e, update your core/system/modules, then **stop and restart your Forge server** so it picks up the new files.

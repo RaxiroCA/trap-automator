@@ -89,7 +89,8 @@ To check syntax without Foundry, run `node --check scripts/trap-automator.js`. T
 ## Git remotes
 
 - `origin` is the fork, `RaxiroCA/trap-automator`. Push branches here and open PRs from here.
-- `upstream` is the original, `ryanw341/trap-automator`. `module.json`'s `manifest` and `download` URLs still point here. Only change them if the fork starts publishing its own releases.
+- `upstream` is the original, `ryanw341/trap-automator`.
+- **Releases are published from the fork** (since v1.0.8). `module.json`'s `manifest` and `download` URLs, and the README install URL, point at `RaxiroCA/trap-automator`.
 
 ## Monk's Active Tiles / TokenBar integration notes
 

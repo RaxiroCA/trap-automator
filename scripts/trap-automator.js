@@ -19,6 +19,8 @@
  * hidden from the player.
  */
 
+import { TrapManager } from './trap-manager.js';
+
 class TrapAutomator {
   /** Name of the Monk's Active Tiles action registered by this module. */
   static SPRING_ACTION = 'spring';
@@ -90,6 +92,17 @@ class TrapAutomator {
       config: false,
       type: Object,
       default: {}
+    });
+
+    // "Trap Manager" button in Configure Settings → The Horse's Trap
+    // Automator, for adding, editing and hiding trap and cache types.
+    game.settings.registerMenu('trap-automator', 'manager', {
+      name: 'Trap Manager',
+      label: 'Open Trap Manager',
+      hint: 'Add, edit, hide or remove trap and cache types and their four hint tiers.',
+      icon: 'fas fa-dungeon',
+      type: TrapManager,
+      restricted: true
     });
   }
 
@@ -628,6 +641,12 @@ class TrapAutomator {
             this.openEditDefinitionDialog();
           }
         },
+        manager: {
+          label: 'Trap Manager',
+          callback: () => {
+            new TrapManager().render(true);
+          }
+        },
         cancel: {
           label: 'Cancel'
         }
@@ -922,7 +941,16 @@ class TrapAutomator {
     } catch (err) {
       custom = {};
     }
-    if (custom && Object.keys(custom).length) this.mergeDefinitions(custom);
+    if (custom && Object.keys(custom).length) {
+      // "hidden" lists built-in traps/caches the GM removed in the Trap
+      // Manager; it is not itself a definition, so merge everything else and
+      // then drop the hidden entries.
+      const { hidden, ...defs } = custom;
+      this.mergeDefinitions(defs);
+      for (const type of ['trap', 'cache']) {
+        for (const key of hidden?.[type] ?? []) delete this.definitions[type]?.[key];
+      }
+    }
     // Only populate default triggers when at least one trap or cache exists so
     // blank/test worlds start with an empty trigger list.
     const hasDefs = Object.keys(this.definitions.trap || {}).length > 0

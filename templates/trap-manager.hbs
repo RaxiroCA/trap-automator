@@ -1,0 +1,162 @@
+<div class="ta-manager-body">
+  <aside class="ta-manager-sidebar">
+    <nav class="ta-manager-tabs">
+      <button type="button" class="{{#if isTrap}}active{{/if}}" data-action="switchType" data-type="trap"><i class="fas fa-skull-crossbones"></i> Traps</button>
+      <button type="button" class="{{#unless isTrap}}active{{/unless}}" data-action="switchType" data-type="cache"><i class="fas fa-box-open"></i> Caches</button>
+    </nav>
+    <input type="search" class="ta-manager-search" placeholder="Search {{typeLabel}}s…" value="{{filter}}" />
+    <ol class="ta-manager-list">
+      {{#each groups}}
+      <li class="ta-manager-group">
+        <h4>{{label}}</h4>
+        <ol>
+          {{#each items}}
+          <li class="ta-manager-entry {{#if selected}}selected{{/if}} {{#if hidden}}is-hidden{{/if}}" data-key="{{key}}" data-search="{{search}}">
+            <a class="ta-manager-entry-name" data-action="selectEntry">{{name}}</a>
+            <span class="ta-badge ta-badge-{{status}}">{{statusLabel}}</span>
+            <a class="ta-manager-eye" data-action="toggleHidden" data-tooltip="{{#if hidden}}Hidden: click to show it when placing{{else}}Shown: click to hide it when placing{{/if}}">
+              <i class="fas {{#if hidden}}fa-eye-slash{{else}}fa-eye{{/if}}"></i>
+            </a>
+          </li>
+          {{/each}}
+        </ol>
+      </li>
+      {{else}}
+      <li class="ta-manager-empty">No {{typeLabel}}s yet.</li>
+      {{/each}}
+    </ol>
+    <footer class="ta-manager-sidebar-footer">
+      <span class="ta-manager-count">{{count}} {{typeLabel}}s{{#if hiddenCount}}, {{hiddenCount}} hidden{{/if}}</span>
+      <button type="button" data-action="newEntry"><i class="fas fa-plus"></i> New {{typeLabel}}</button>
+      <div class="ta-manager-io">
+        <button type="button" data-action="exportDefs" data-tooltip="Download all your customisations as JSON"><i class="fas fa-file-export"></i> Export</button>
+        <button type="button" data-action="importDefs" data-tooltip="Load customisations from a JSON export"><i class="fas fa-file-import"></i> Import</button>
+      </div>
+    </footer>
+  </aside>
+
+  <section class="ta-manager-editor">
+    {{#if editor}}
+    <header class="ta-manager-editor-header">
+      <h2>{{#if editor.isNew}}New {{typeLabel}}{{else}}{{editor.name}}{{/if}}</h2>
+      <span class="ta-badge ta-badge-{{editor.status}}">{{editor.statusLabel}}</span>
+      {{#if editor.hidden}}<span class="ta-badge ta-badge-hidden">Hidden</span>{{/if}}
+      {{#if dirty}}<span class="ta-manager-unsaved">Unsaved changes</span>{{/if}}
+    </header>
+
+    <fieldset>
+      <legend>{{typeLabel}}</legend>
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" data-field="name" value="{{editor.name}}" />
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <input type="text" data-field="category" value="{{editor.category}}" list="ta-manager-categories" placeholder="{{#if isTrap}}e.g. generic{{else}}optional{{/if}}" />
+        <datalist id="ta-manager-categories">
+          {{#each categories}}<option value="{{value}}">{{label}}</option>{{/each}}
+        </datalist>
+      </div>
+      <p class="hint">Pick an existing category or type a new one.</p>
+      {{#if isTrap}}
+      <div class="form-group stacked">
+        <label>What happens when it springs</label>
+        <textarea data-field="description.flavor" rows="3">{{editor.description.flavor}}</textarea>
+      </div>
+      <p class="hint">The sentence "You &lt;trigger&gt; &lt;location&gt;." is added in front automatically. Use <code>{location}</code> where the location should appear, e.g. "Spikes shoot out of the {location}!"</p>
+      <div class="form-group">
+        <label>Failed save / hit text</label>
+        <input type="text" data-field="description.fail" value="{{editor.description.fail}}" />
+      </div>
+      <div class="form-group">
+        <label>Successful save / miss text</label>
+        <input type="text" data-field="description.success" value="{{editor.description.success}}" />
+      </div>
+      {{else}}
+      <div class="form-group stacked">
+        <label>What the players find</label>
+        <textarea data-field="description.found" rows="3">{{editor.description.found}}</textarea>
+      </div>
+      {{/if}}
+    </fieldset>
+
+    <fieldset>
+      <legend>Defaults when placing</legend>
+      <div class="form-group">
+        <label>Detection DC</label>
+        <input type="number" min="1" max="40" data-field="defaultDetectionDC" data-dtype="Number" value="{{editor.defaultDetectionDC}}" />
+      </div>
+      <p class="hint">Passive Perception needed to notice it. The hints below start at this DC.</p>
+      {{#if isTrap}}
+      <div class="form-group">
+        <label>Attacks with</label>
+        <select data-field="attackType">
+          <option value="save" {{#unless editor.isAttack}}selected{{/unless}}>Saving throw (vs DC)</option>
+          <option value="attack" {{#if editor.isAttack}}selected{{/if}}>Attack roll (vs AC)</option>
+        </select>
+      </div>
+      {{#if editor.isAttack}}
+      <div class="form-group">
+        <label>Attack bonus</label>
+        <input type="number" min="-5" max="30" data-field="defaultAttackBonus" data-dtype="Number" value="{{editor.defaultAttackBonus}}" />
+      </div>
+      {{else}}
+      <div class="form-group">
+        <label>Save ability</label>
+        <select data-field="defaultSave">
+          {{#each editor.saveOptions}}<option value="{{value}}" {{#if selected}}selected{{/if}}>{{label}}</option>{{/each}}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Save DC</label>
+        <input type="number" min="1" max="30" data-field="defaultDC" data-dtype="Number" value="{{editor.defaultDC}}" />
+      </div>
+      {{/if}}
+      {{/if}}
+    </fieldset>
+
+    <fieldset class="ta-manager-hints">
+      <legend>Hint sets</legend>
+      <p class="hint">Each time this {{typeLabel}} is placed, one set is picked at random and its four hints are placed around the tile. Higher tiers should be more revealing. Every set needs all four hints.</p>
+      {{#each editor.sets}}
+      <div class="ta-manager-set" data-set="{{index}}">
+        <header>
+          <strong>Set {{number}}</strong>
+          {{#if canRemove}}
+          <a data-action="removeSet" data-tooltip="Remove this set"><i class="fas fa-trash"></i></a>
+          {{/if}}
+        </header>
+        {{#each tiers}}
+        <div class="form-group">
+          <label>Hint {{tier}} <span class="ta-manager-dc">DC {{dc}}</span></label>
+          <input type="text" data-field="{{field}}" value="{{value}}" />
+        </div>
+        {{/each}}
+      </div>
+      {{/each}}
+      <button type="button" data-action="addSet"><i class="fas fa-plus"></i> Add hint set</button>
+    </fieldset>
+
+    <footer class="ta-manager-editor-footer">
+      <button type="button" class="ta-manager-save" data-action="saveEntry"><i class="fas fa-save"></i> Save</button>
+      {{#if editor.canHide}}
+      <button type="button" data-action="toggleHidden" data-key="{{editor.key}}">
+        {{#if editor.hidden}}<i class="fas fa-eye"></i> Show when placing{{else}}<i class="fas fa-eye-slash"></i> Hide when placing{{/if}}
+      </button>
+      {{/if}}
+      {{#if editor.canRevert}}
+      <button type="button" data-action="revertEntry"><i class="fas fa-undo"></i> Revert to built-in</button>
+      {{/if}}
+      {{#if editor.canDelete}}
+      <button type="button" class="ta-manager-danger" data-action="deleteEntry"><i class="fas fa-trash"></i> Delete</button>
+      {{/if}}
+    </footer>
+    {{else}}
+    <div class="ta-manager-placeholder">
+      <i class="fas fa-dungeon"></i>
+      <p>Select a {{typeLabel}} on the left to edit it and its hints, or create a new one.</p>
+      <p class="hint">Built-in entries can be edited (your changes are saved separately and can be reverted) or hidden from the placement menus. Your own entries can be deleted.</p>
+    </div>
+    {{/if}}
+  </section>
+</div>

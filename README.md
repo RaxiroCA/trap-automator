@@ -114,9 +114,23 @@ The GM must be viewing the scene when a saving throw trap springs, because Token
 - Each token is named after its clue text and shows the name on hover, so a player who can see the token can read the clue.
 - Hint tokens are not linked to the `Hint +N` actors, so each trap's hints keep their own DCs. To change one later, edit the *Hiding* effect on that token's actor.
 
-### Custom definitions
+### Trap Manager: customise traps, caches and hints
 
-From the main menu you can also:
+Go to **Game Settings → Configure Settings → The Horse's Trap Automator** and click **Open Trap Manager** (GM only). You can also open it from the **Trap Manager** button in the Shift + T menu.
+
+- **Traps / Caches** tabs list every type, grouped by category and searchable. Each one is labelled **Built-in**, **Modified** (a built-in you've edited) or **Custom** (one you created).
+- **Edit any type:** its name, category, description and the hit/miss (or success/failure) text, plus the defaults used when placing it: Detection DC, saving throw or attack roll, save ability and DC, or attack bonus.
+- **Hint sets:** each set has one hint per tier (+2, +4, +6, +10), and the DC each hint will get is shown next to it. Add as many sets as you like; one is picked at random each time the trap is placed. Empty sets are ignored, and partly filled sets are flagged when you save.
+- **New Trap / New Cache** creates your own type. Type a new category name to create a category.
+- **Hide when placing** (or the eye icon in the list) removes a type from the placement menus without deleting it. This is how you remove built-in traps you don't want.
+- **Revert to built-in** throws away your edits to a built-in type. **Delete** removes a type you created.
+- **Export / Import** saves all your customisations to a JSON file and loads them back, so you can back them up or copy them to another world. *Merge* adds to what you have; *Replace* starts over from the file.
+
+Changes take effect immediately. Traps and caches already placed on scenes are not changed.
+
+### Custom definitions (older dialogs)
+
+From the Shift + T menu you can also:
 
 - **Add Definition**: add a category, sub-category, trigger phrase, trap or cache. Traps and caches can have several hint sets, and one is chosen at random each time. Traps also store defaults for the Trap Details dialog: attack type, save DC, attack bonus and Detection DC.
 - **Edit Definitions**: change or delete them. Editing a built-in trap or cache saves a custom copy that overrides it; only custom entries can be deleted.

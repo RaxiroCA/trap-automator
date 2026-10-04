@@ -39,8 +39,9 @@ The module needs a few world documents that it ships in its compendiums. Skippin
 2. **Import the hint actors.** In the Compendium sidebar, right-click **The Horse's Actors** → *Import All Content*. This creates `Hint +2`, `Hint +4`, `Hint +6`, `Hint +10` and `Loot` in your Actors tab.
    - Keep these names exactly as they are. The module finds them by name.
    - **Set their token art.** The shipped actors point at an image that isn't included in the module, so they show as a broken image. Open each `Hint +N` actor → *Prototype Token* → *Appearance* and choose any image (for example `icons/svg/eye.svg`). Tokens you spawn afterwards will use it.
-3. **Import the Trap Trigger macro.** In the Compendium sidebar, open **The Horse's Macros** and drag **Trap Trigger** into your Macros directory.
-4. **Point the module at that macro.** Press the hotkey (below), choose **Select Macro**, pick *Trap Trigger* and save. Without this step, traps are created but never fire, because the default macro ID doesn't exist in your world.
+You don't need to import any macro. Traps run the *Trap Trigger* macro straight from the module's **The Horse's Macros** compendium, so keep that compendium visible to players (the default). To use your own macro instead, press the hotkey, choose **Select Macro** and pick it; choose *Trap Trigger (bundled with module)* to switch back.
+
+> Upgrading from 1.0.7 or earlier? Trap tiles placed with older versions pointed at a macro that didn't exist and fired for any token. When the GM loads the world, the module repairs them automatically.
 
 ## Usage
 
@@ -101,7 +102,7 @@ Custom definitions are saved in the world, so they survive restarts and module u
 | Hotkey does nothing | Make sure you are the GM and the canvas has focus. Check the binding in *Configure Controls*. |
 | `No actor named "Hint +N" found` | Import **The Horse's Actors** compendium (setup step 2) and keep the actor names unchanged. |
 | Hint tokens show a broken image | Set the hint actors' prototype token image (setup step 2). |
-| Token walks over the trap and nothing happens | Import *Trap Trigger* and select it with **Select Macro** (setup steps 3–4), check that Monk's Active Tile Triggers is enabled, and test with a player-owned token. |
+| Token walks over the trap and nothing happens | Check that Monk's Active Tile Triggers is enabled, test with a player-owned token, and make sure players can see *The Horse's Macros* compendium. If you picked a custom macro with **Select Macro**, check that it still exists. |
 | Damage isn't applied | Expected. The macro posts the damage formula to chat; the GM applies it. |
 
 ## Credits

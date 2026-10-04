@@ -20,6 +20,13 @@
  */
 
 class TrapAutomator {
+  /**
+   * UUID of the Trap Trigger macro shipped in the module's macro compendium.
+   * Monk's Active Tiles resolves runmacro targets with fromUuid, so the tile
+   * can point straight at the compendium copy without importing it.
+   */
+  static BUNDLED_MACRO_UUID = 'Compendium.trap-automator.the-horses-macros.Macro.U9VWVLlOLaA23jqP';
+
   constructor() {
     // Live state for the current creation workflow.
     this.currentData = {};
@@ -76,16 +83,104 @@ class TrapAutomator {
     });
 
     // Register a setting to persist the macro UUID used when triggering
-    // traps or caches. When a GM selects a different macro via the
-    // "Select Macro" menu this value will be updated. The default is
-    // the provided macro id used in earlier versions of the module.
+    // traps. When a GM selects a different macro via the "Select Macro" menu
+    // this value will be updated. An empty value means "use the bundled Trap
+    // Trigger macro" (see resolveTriggerMacroUuid). Earlier versions defaulted
+    // to a world macro id that only existed in the author's world.
     game.settings.register('trap-automator', 'macroId', {
       name: 'Trap Automator Macro ID',
       scope: 'world',
       config: false,
       type: String,
-      default: 'Macro.z9RXNw9fEKBIkxHW'
+      default: ''
     });
+  }
+
+  /**
+   * Resolve a document UUID, returning null instead of throwing for
+   * malformed or missing references. Uses the namespaced helper on v13+.
+   * @param {string} uuid Document UUID
+   * @returns {Promise<foundry.abstract.Document|null>}
+   */
+  static async safeFromUuid(uuid) {
+    if (!uuid) return null;
+    const resolve = foundry.utils?.fromUuid ?? globalThis.fromUuid;
+    try {
+      return (await resolve(uuid)) ?? null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * Determine which macro trap tiles should run. Prefers the macro the GM
+   * picked via "Select Macro" while it still exists, otherwise falls back to
+   * the Trap Trigger macro in the module compendium so traps work without
+   * any setup.
+   * @returns {Promise<string|null>} Macro UUID, or null if none resolves
+   */
+  async resolveTriggerMacroUuid() {
+    const chosen = game.settings.get('trap-automator', 'macroId');
+    if (chosen) {
+      const macro = await TrapAutomator.safeFromUuid(chosen);
+      if (macro?.documentName === 'Macro') return macro.uuid;
+      console.warn(`Trap Automator: selected macro "${chosen}" not found, using the bundled Trap Trigger macro`);
+    }
+    const bundled = await TrapAutomator.safeFromUuid(TrapAutomator.BUNDLED_MACRO_UUID);
+    if (bundled?.documentName === 'Macro') return bundled.uuid;
+    return null;
+  }
+
+  /**
+   * Repair trap tiles created by earlier versions. Those tiles point at a
+   * macro id that does not exist in most worlds, so they never fire, and
+   * they set a "restrictedTokens" key that Monk's Active Tiles ignores, so
+   * any token (not just player-owned ones) could set them off. Rewrites the
+   * runmacro target to the currently resolved macro and sets the
+   * "restriction" key MATT actually reads. Only the active GM runs this.
+   */
+  async repairTrapTiles() {
+    if (!game.users.activeGM?.isSelf) return;
+    let macroUuid = null;
+    let repaired = 0;
+    for (const scene of game.scenes) {
+      const updates = [];
+      for (const tile of scene.tiles) {
+        if (tile.getFlag('trap-automator', 'trapData')?.type !== 'trap') continue;
+        const matt = tile.flags['monks-active-tiles'];
+        if (!matt || !Array.isArray(matt.actions)) continue;
+        let changed = false;
+        const actions = [];
+        for (const action of matt.actions) {
+          const isMacroAction = action?.action === 'runmacro' && !action.data?.entity;
+          if (isMacroAction && !((await TrapAutomator.safeFromUuid(action.data?.macroid))?.documentName === 'Macro')) {
+            macroUuid ??= await this.resolveTriggerMacroUuid();
+            if (macroUuid) {
+              actions.push(foundry.utils.mergeObject(action, { data: { macroid: macroUuid } }, { inplace: false }));
+              changed = true;
+              continue;
+            }
+          }
+          actions.push(action);
+        }
+        const update = { _id: tile.id };
+        if (changed) update['flags.monks-active-tiles.actions'] = actions;
+        // The stale restrictedTokens key is left in place; MATT ignores it.
+        if ('restrictedTokens' in matt && !matt.restriction) {
+          update['flags.monks-active-tiles.restriction'] = 'player';
+          changed = true;
+        }
+        if (changed) updates.push(update);
+      }
+      if (updates.length) {
+        await scene.updateEmbeddedDocuments('Tile', updates);
+        repaired += updates.length;
+      }
+    }
+    if (repaired) {
+      console.log(`Trap Automator: repaired ${repaired} trap tile(s)`);
+      ui.notifications.info(`Trap Automator: repaired ${repaired} existing trap tile(s) so they trigger correctly.`);
+    }
   }
 
   /**
@@ -1132,7 +1227,10 @@ class TrapAutomator {
     // Build options list sorted by name. Include both name and id for clarity.
     macroDocs = macroDocs.sort((a, b) => a.name.localeCompare(b.name));
     const currentUuid = game.settings.get('trap-automator', 'macroId') || '';
-    const options = macroDocs.map(macro => {
+    // The empty value selects the bundled compendium macro, which is also
+    // what resolveTriggerMacroUuid falls back to.
+    const bundledOption = `<option value=""${currentUuid ? '' : ' selected'}>Trap Trigger (bundled with module)</option>`;
+    const options = bundledOption + macroDocs.map(macro => {
       const uuid = macro.uuid ?? `Macro.${macro.id}`;
       const selected = uuid === currentUuid ? ' selected' : '';
       const label = `${macro.name} (${uuid})`;
@@ -1153,11 +1251,7 @@ class TrapAutomator {
         save: {
           label: 'Save',
           callback: async html => {
-            const uuid = html.find('#ta-select-macro').val();
-            if (!uuid) {
-              ui.notifications.warn('No macro selected.');
-              return;
-            }
+            const uuid = html.find('#ta-select-macro').val() || '';
             await game.settings.set('trap-automator', 'macroId', uuid);
             ui.notifications.info('Trap Automator: macro updated. New traps will use the selected macro.');
           }
@@ -2408,10 +2502,13 @@ class TrapAutomator {
     const flags = { 'trap-automator': { trapData } };
     if (trapData.type === 'trap') {
       // Prepare the macro trigger for Monk's Active Tile Triggers. Use the
-      // macro UUID chosen by the GM via settings, falling back to the default
-      // value. Wrap the JSON argument in quotes to prevent splitting on
-      // spaces and escape any double quotes inside the JSON.
-      const macroUuid = game.settings.get('trap-automator', 'macroId') || 'Macro.z9RXNw9fEKBIkxHW';
+      // macro chosen by the GM via settings, falling back to the bundled
+      // compendium macro. Wrap the JSON argument in quotes to prevent
+      // splitting on spaces and escape any double quotes inside the JSON.
+      const macroUuid = await this.resolveTriggerMacroUuid();
+      if (!macroUuid) {
+        ui.notifications.error('Trap Automator: no trigger macro found. The tile will not fire until you choose one via Select Macro.');
+      }
       const rawJson = JSON.stringify(trapData);
       const escaped = rawJson.replace(/"/g, '\\"');
       const argString = `"${escaped}"`;
@@ -2419,15 +2516,16 @@ class TrapAutomator {
         id: foundry.utils.randomID(),
         action: 'runmacro',
         data: {
-          macroid: macroUuid,
+          macroid: macroUuid ?? '',
           args: argString,
           runasgm: 'player'
         }
       };
+      // "restriction: 'player'" limits the trigger to player-owned tokens.
       flags['monks-active-tiles'] = {
         trigger: 'enter',
         active: true,
-        restrictedTokens: 'players',
+        restriction: 'player',
         actions: [action]
       };
     }
@@ -2659,5 +2757,11 @@ Hooks.once('ready', async () => {
     console.log('Trap Automator: definitions ready');
   } catch (err) {
     console.error('Trap Automator: error building definitions', err);
+  }
+  // Point trap tiles from earlier versions at a macro that exists.
+  try {
+    await game.trapAutomator.repairTrapTiles();
+  } catch (err) {
+    console.error('Trap Automator: error repairing trap tiles', err);
   }
 });

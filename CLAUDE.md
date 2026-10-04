@@ -17,12 +17,12 @@ There is no `package.json`, bundler, linter or test suite. What's in the repo sh
 
 ## Runtime flow
 
-1. `init`: `TrapAutomator.registerSettings()` registers `customDefs` (world, Object) and `macroId` (world, String), creates `game.trapAutomator` and registers the keybinding (default **Shift+T**, GM only).
-2. `ready`: fetches `modules/trap-automator/definitions/builtin-defs.json` into `builtinDefs`, then `rebuildDefinitions()` deep-merges it with `customDefs` and fills in the default triggers.
+1. `init`: `TrapAutomator.registerSettings()` registers `customDefs` (world, Object) and `macroId` (world, String; empty means the bundled compendium macro), creates `game.trapAutomator` and registers the keybinding (default **Shift+T**, GM only).
+2. `ready`: fetches `modules/trap-automator/definitions/builtin-defs.json` into `builtinDefs`, then `rebuildDefinitions()` deep-merges it with `customDefs` and fills in the default triggers. Finally, the active GM runs `repairTrapTiles()`, which repoints trap tiles from older versions at a macro that resolves and adds the `restriction` key.
 3. Hotkey → `openInitialDialog()` → chain of dialogs (type → category/sub-category → trap → location → trigger → details). The choices build up in `this.currentData`.
 4. `promptDrawTile()` registers a one-shot `createTile` hook. `onTileCreated()` then:
    - builds `trapData` (`buildTrapData()`) and writes it to `flags['trap-automator'].trapData`,
-   - for traps only, writes `flags['monks-active-tiles']` with an `enter` trigger, `restrictedTokens: 'players'`, and a `runmacro` action whose `args` is the JSON-stringified `trapData` with quotes escaped,
+   - for traps only, writes `flags['monks-active-tiles']` with an `enter` trigger, `restriction: 'player'` (player-owned tokens only), and a `runmacro` action whose `data.macroid` comes from `resolveTriggerMacroUuid()` and whose `args` is the JSON-stringified `trapData` with quotes escaped,
    - `spawnHintsAroundTile()` creates linked tokens from world actors found **by name** (`Hint +2` …), each named after its hint text.
 5. The `Trap Trigger` macro (in the compendium, not in the JS) parses `args`, prompts the player for roll mode and bonus, rolls the save and posts the result to chat. It does **not** apply damage.
 
@@ -89,15 +89,24 @@ To check syntax without Foundry, run `node --check scripts/trap-automator.js`. T
 - `origin` is the fork, `RaxiroCA/trap-automator`. Push branches here and open PRs from here.
 - `upstream` is the original, `ryanw341/trap-automator`. `module.json`'s `manifest` and `download` URLs still point here. Only change them if the fork starts publishing its own releases.
 
+## Monk's Active Tiles integration notes
+
+Verified against the MATT source (v14.01):
+
+- Trigger flags live at `flags['monks-active-tiles']`. Token restriction is `restriction: 'gm' | 'player'`; there is no `restrictedTokens` key (older versions of this module wrote one, and MATT ignored it).
+- `runmacro` accepts the legacy `data.macroid` (a UUID resolved with `fromUuid`, so **compendium UUIDs work**) or the newer `data.entity` selector. This module writes `macroid`.
+- With `runasgm: 'player'`, MATT emits a socket message and the triggering player's client runs the macro, so that player must be able to read the macro (module compendiums are visible to players by default).
+- With MATT's `use-core-macro` setting off (the default), MATT runs the command itself through `new Function`, with no Macro permission check. With it on, MATT calls `Macro#execute`, which checks permissions. That path is untested with a compendium macro.
+- MATT 14.x requires Foundry v14. v13 users need an older MATT release.
+
 ## Known issues / backlog
 
 These were found while debugging a real install (see `old-ai-chat.txt`, a transcript with another assistant; much of its advice was wrong, so don't treat it as documentation).
 
-1. **Traps never fire out of the box.** The `macroId` setting defaults to `Macro.z9RXNw9fEKBIkxHW`, which exists in no one's world. The compendium macro is `U9VWVLlOLaA23jqP`, and importing it creates a new world ID anyway. Users must run *Select Macro* by hand. Fix idea: on `ready` (GM), find or import the compendium macro and store its UUID, or resolve the trigger macro at runtime.
-2. **Hint actors have broken art.** Their `img` and `prototypeToken.texture.src` point to `tokenizer/npc-images/hint_2.*.webp`, a file in the author's world that isn't shipped. Ship an image in the module (or use a core icon) and repack.
-3. **Hint actors must be imported by hand.** `spawnHintsAroundTile()` uses `game.actors.getName('Hint +N')`. Consider importing them on first use, or creating tokens straight from the compendium.
-4. **The Trap Trigger macro is out of date.** It uses the ApplicationV1 `Dialog` (deprecated in v13) and `roll.evaluate({ async: true })` (an obsolete option since v12). It doesn't use dnd5e's own save roll (`actor.rollSavingThrow`), so it ignores the system's bonuses and effects, and it doesn't apply damage. Because its code lives only in the LevelDB pack, consider moving it into the JS (for example `game.trapAutomator.resolveTrap(token, data)`) so it can be versioned and reviewed.
-5. **Hint +2 has no Stealthy "Hiding" effect** (the other three do), so it's probably visible to everyone. Check whether that's intended.
-6. **`module.json` doesn't declare the dnd5e system** in `relationships.systems`, even though the packs are dnd5e-only.
-7. **Delegated jQuery handlers leak.** `openAddCacheDialog` and `openAddTrapDialog` attach `$(document)` handlers without `onDialogClose` cleanup. They `.off()` before `.on()`, so they don't stack, but they outlive the dialog.
-8. **Unescaped HTML.** Definition text is interpolated into HTML without escaping (for example `value="${def.name}"`), so a quote in a name breaks the form. Use `foundry.utils.escapeHTML` or equivalent.
+1. **Hint actors have broken art.** Their `img` and `prototypeToken.texture.src` point to `tokenizer/npc-images/hint_2.*.webp`, a file in the author's world that isn't shipped. Ship an image in the module (or use a core icon) and repack.
+2. **Hint actors must be imported by hand.** `spawnHintsAroundTile()` uses `game.actors.getName('Hint +N')`. Consider importing them on first use, or creating tokens straight from the compendium.
+3. **The Trap Trigger macro is out of date.** It uses the ApplicationV1 `Dialog` (deprecated in v13) and `roll.evaluate({ async: true })` (an obsolete option since v12). It doesn't use dnd5e's own save roll (`actor.rollSavingThrow`), so it ignores the system's bonuses and effects, and it doesn't apply damage. Because its code lives only in the LevelDB pack, consider moving it into the JS (for example `game.trapAutomator.resolveTrap(token, data)`) so it can be versioned and reviewed.
+4. **Hint +2 has no Stealthy "Hiding" effect** (the other three do), so it's probably visible to everyone. Check whether that's intended.
+5. **`module.json` doesn't declare the dnd5e system** in `relationships.systems`, even though the packs are dnd5e-only.
+6. **Delegated jQuery handlers leak.** `openAddCacheDialog` and `openAddTrapDialog` attach `$(document)` handlers without `onDialogClose` cleanup. They `.off()` before `.on()`, so they don't stack, but they outlive the dialog.
+7. **Unescaped HTML.** Definition text is interpolated into HTML without escaping (for example `value="${def.name}"`), so a quote in a name breaks the form. Use `foundry.utils.escapeHTML` or equivalent.

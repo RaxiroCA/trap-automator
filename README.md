@@ -6,7 +6,14 @@ A Foundry VTT module for **D&D 5e** that lets the GM place traps and loot caches
 - for traps, wires the tile to **Monk's Active Tiles** so the trap springs when any token enters it,
 - surrounds the tile with four **hint tokens** (above, right, below, left), each one only noticeable by characters whose passive Perception is high enough (via **Stealthy**).
 
-When a trap springs, **Monk's TokenBar** posts a saving throw request to chat for the tokens caught in it. Each player rolls from that card, and the GM rolls for NPCs. Once everyone has rolled, the module rolls the trap's damage and **applies it to each token**: full damage on a failed save, and half on a success if the trap allows it. Resistances and immunities are respected.
+Every trap and cache has a **Detection DC**: the passive Perception needed to notice it. The hints start at that DC and get harder from there.
+
+Each trap attacks in one of two ways:
+
+- **Saving throw (vs DC):** **Monk's TokenBar** posts a saving throw request to chat for the tokens caught in it. Each player rolls from that card, and the GM rolls for NPCs.
+- **Attack roll (vs AC):** the trap rolls d20 + its attack bonus against each token's Armor Class, the way a dart or blade trap would.
+
+Either way, the module **applies the damage to each token**, respecting resistances and immunities.
 
 The same hint tokens appear around caches, so players have to investigate to tell a blessing from a curse. Each trap and cache has several hint sets, and one is picked at random every time, so players can't memorise what a clue means.
 
@@ -57,7 +64,10 @@ The default hotkey is **Shift + T** (GM only). To change it, go to *Game Setting
 1. **Trap** → pick a category (and sub-category, if there is one) → pick a trap.
 2. Choose where it is: floor, wall, ceiling or other.
 3. Choose the trigger, for example "step on a pressure plate".
-4. Set the save DC, save ability, damage formula and type, half damage on success, and an optional extra effect.
+4. Fill in the **Trap Details**:
+   - **Detection DC** (default 15): the passive Perception needed to notice the trap. The four hint DCs are filled in from it (see *Hint tokens*), and you can adjust each one.
+   - **Trap attacks with**: *Saving throw (vs DC)*, with the save ability, save DC and optional half damage on a successful save; or *Attack roll (vs AC)*, with the trap's attack bonus (default +5).
+   - The damage formula and type, and an optional extra effect.
 5. **Draw a tile** on the scene where the trap is (Tiles layer). The module attaches the trigger to that tile and places the four hint tokens around it.
 
 The trap lives on a **Tile** with a Monk's Active Tiles trigger, not on a Scene Region. To inspect or tweak it, open the tile's config and look at the *Triggers* tab that Monk's Active Tiles adds. You'll see a single *Spring Trap* action there.
@@ -70,33 +80,52 @@ Same flow: **Cache** → pick a type → location → optional description → d
 
 ### What happens when a trap is triggered
 
-When **any token** (player character, NPC or a token the GM moves) enters the tile:
+Any token (player character, NPC or a token the GM moves) that enters the tile springs the trap.
+
+**Saving throw traps**
 
 1. A **Monk's TokenBar** saving throw card appears in chat, showing the trap's name and flavour text. The DC is hidden.
 2. Each player clicks to roll for their own character, with TokenBar's usual advantage/disadvantage options. The GM rolls for NPCs from the same card.
 3. Once every token on the card has rolled, the module rolls the trap's damage once and posts it to chat.
-4. That damage is **applied to each token's hit points** (temporary HP first): full damage on a failure, half on a success if *Half damage on success* was ticked, and none otherwise. A summary with each token's success or failure text is posted to chat.
+4. That damage is **applied to each token's hit points** (temporary HP first): full damage on a failure, half on a success if *Half damage on a successful save* was ticked, and none otherwise. A summary with each token's success or failure text is posted to chat.
 
-The GM must be viewing the scene when the trap springs, because TokenBar needs the tokens on the GM's canvas.
+The GM must be viewing the scene when a saving throw trap springs, because TokenBar needs the tokens on the GM's canvas.
+
+**Attack roll traps**
+
+1. The trap immediately rolls d20 + its attack bonus against each token's AC. Nobody needs to click anything.
+2. A roll that meets or beats the AC hits. A natural 20 always hits and is a **critical hit**, with the damage dice doubled. A natural 1 always misses.
+3. Each hit rolls its own damage, which is **applied to that token's hit points**. One chat card lists every attack, the AC it was compared to, hit or miss, and the damage.
 
 ### Hint tokens
 
-- `Hint +2`, `Hint +4`, `Hint +6` and `Hint +10` are the four difficulty tiers; the higher the number, the more revealing the clue.
+- `Hint +2`, `Hint +4`, `Hint +6` and `Hint +10` are the four tiers; the higher the tier, the more revealing the clue and the harder it is to spot.
+- Each tier has its own **DC**, based on the trap's Detection DC: the `+2` hint sits at the Detection DC and the others above it.
+
+  | Hint | DC | With Detection DC 15 |
+  |---|---|---|
+  | `Hint +2` | Detection DC | 15 |
+  | `Hint +4` | Detection DC + 2 | 17 |
+  | `Hint +6` | Detection DC + 4 | 19 |
+  | `Hint +10` | Detection DC + 8 | 23 |
+
+  You can change any of these in the Trap Details or Cache Details dialog before drawing the tile.
+- A character sees a hint when their **passive Perception is at least that hint's DC**. Stealthy handles this; each hint token stores its DC on its own *Hiding* effect.
 - Each token is named after its clue text and shows the name on hover, so a player who can see the token can read the clue.
-- Whether a player can see a hint is handled by Stealthy, based on the hint actor's Stealth against the character's passive Perception.
+- Hint tokens are not linked to the `Hint +N` actors, so each trap's hints keep their own DCs. To change one later, edit the *Hiding* effect on that token's actor.
 
 ### Custom definitions
 
 From the main menu you can also:
 
-- **Add Definition**: add a category, sub-category, trigger phrase, trap or cache. Traps and caches can have several hint sets, and one is chosen at random each time.
+- **Add Definition**: add a category, sub-category, trigger phrase, trap or cache. Traps and caches can have several hint sets, and one is chosen at random each time. Traps also store defaults for the Trap Details dialog: attack type, save DC, attack bonus and Detection DC.
 - **Edit Definitions**: change or delete them. Editing a built-in trap or cache saves a custom copy that overrides it; only custom entries can be deleted.
 
 Custom definitions are saved in the world, so they survive restarts and module updates.
 
 ## Built-in content
 
-- **71 traps** across Sci-Fi, Natural, Misc (shown under Generic) and a Grimdark family with the sub-categories Imperial, Space Elves, Cyborgs, Greenskins and Biohorrors.
+- **71 traps** (9 of them attack-roll traps at +5 to hit, such as the Autoturret, Choppa Pendulum and Snake Pit) across Sci-Fi, Natural, Misc (shown under Generic) and a Grimdark family with the sub-categories Imperial, Space Elves, Cyborgs, Greenskins and Biohorrors.
 - **17 caches**, from ammo caches and data-slate archives to buried stashes and hidden paths.
 - Every trap and cache has hint sets for floor, wall, ceiling and other.
 
@@ -110,6 +139,8 @@ Custom definitions are saved in the world, so they survive restarts and module u
 | Hint tokens show a broken image | Set the hint actors' prototype token image (setup step 2). |
 | Token walks over the trap and nothing happens | Check that Monk's Active Tile Triggers and Monk's TokenBar are enabled, that the tile's *Triggers* tab shows an active *Spring Trap* action, and that a GM is logged in and viewing the scene. |
 | Roll card appears but no damage is applied | Damage is applied only after **every** token on the card has rolled. Check that the trap has a damage formula; an invalid formula is reported as an error. |
+| Players see hints they shouldn't (or can't see any) | Hints placed before Detection DCs were added (v1.0.8 and earlier) use the old random stealth values. Place the trap again, or edit the *Hiding* effect on each hint token. An active Perception check banked in Stealthy can also reveal hints above a character's passive Perception; the *Clear Banked Perception* macro resets it. |
+| Attack trap never hits | Check the target's AC and the trap's attack bonus in the chat card. A natural 20 always hits. |
 | Damage ignores resistances | The damage type isn't a D&D 5e type, so it was applied as untyped damage. Use `piercing`, `fire` and so on. |
 
 ## Credits

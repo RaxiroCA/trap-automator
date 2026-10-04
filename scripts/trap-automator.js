@@ -23,6 +23,18 @@ class TrapAutomator {
   /** Name of the Monk's Active Tiles action registered by this module. */
   static SPRING_ACTION = 'spring';
 
+  /** Hint tiers, matching the "Hint +N" actor names. */
+  static HINT_TIERS = ['+2', '+4', '+6', '+10'];
+
+  /** How far above the Detection DC each hint tier sits by default. */
+  static HINT_OFFSETS = { '+2': 0, '+4': 2, '+6': 4, '+10': 8 };
+
+  /** Default passive Perception needed to notice a trap or cache. */
+  static DEFAULT_DETECTION_DC = 15;
+
+  /** Default attack bonus for traps that make attack rolls. */
+  static DEFAULT_ATTACK_BONUS = 5;
+
   constructor() {
     // Live state for the current creation workflow.
     this.currentData = {};
@@ -115,22 +127,29 @@ class TrapAutomator {
         await game.trapAutomator.springTrap(tile, tokens);
         return {};
       },
-      content: async () => '<span class="action-style">Spring Trap</span> <span class="details-style">(save via Monk\'s TokenBar, damage applied automatically)</span>'
+      content: async () => '<span class="action-style">Spring Trap</span> <span class="details-style">(saving throw via Monk\'s TokenBar or attack roll vs AC; damage applied automatically)</span>'
     });
   }
 
   /**
-   * Spring the trap stored on a tile for the tokens that entered it. Posts a
-   * Monk's TokenBar saving throw request to chat so each token's owner (or
-   * the GM, for NPCs) rolls it from the card. The trap details travel with
-   * the request in the TokenBar message options, and damage is applied by
-   * onTokenBarRollComplete once every token has rolled.
+   * Spring the trap stored on a tile for the tokens that entered it.
+   *
+   * Saving throw traps post a Monk's TokenBar request to chat so each
+   * token's owner (or the GM, for NPCs) rolls the save from the card. The
+   * trap details travel with the request in the TokenBar message options,
+   * and damage is applied by onTokenBarRollComplete once every token has
+   * rolled. Attack roll traps are resolved immediately by resolveTrapAttack,
+   * since the trap (not the victim) makes the roll.
    * @param {TileDocument} tile The trap tile
    * @param {TokenDocument[]} tokens Tokens that triggered the tile
    */
   async springTrap(tile, tokens) {
     const trap = tile?.getFlag('trap-automator', 'trapData');
     if (!trap || trap.type !== 'trap') return;
+    if (trap.attackType === 'attack') {
+      await this.resolveTrapAttack(trap, tokens.map(t => t?.document ?? t).filter(t => t?.actor));
+      return;
+    }
     const api = game.MonksTokenBar;
     if (!api?.requestRoll) {
       ui.notifications.error("Trap Automator: Monk's TokenBar is not active, so the trap's saving throw can't be requested.");
@@ -209,18 +228,10 @@ class TrapAutomator {
         if (!passed) amount = damageRoll.total;
         else if (trap.halfDamageOnSuccess) amount = Math.floor(damageRoll.total / 2);
       }
-      if (amount > 0 && actor) {
-        try {
-          await TrapAutomator.applyDamage(actor, amount, damageType);
-        } catch (err) {
-          console.error(`Trap Automator: failed to apply damage to ${actor.name}`, err);
-          ui.notifications.error(`Trap Automator: couldn't apply damage to ${actor.name}. See console for details.`);
-        }
-      }
+      if (amount > 0 && actor) await TrapAutomator.applyTrapDamage(actor, amount, damageType);
       const name = esc(tokenDoc?.name ?? res.name ?? 'Unknown');
       const text = esc(passed ? (trap.successText || '') : (trap.failText || ''));
-      const typeText = trap.damageType ? ` ${esc(trap.damageType)}` : '';
-      const dmg = damageRoll ? ` <em>(${amount > 0 ? `${amount}${typeText} damage` : 'no damage'})</em>` : '';
+      const dmg = damageRoll ? ` <em>(${TrapAutomator.damageLabel(amount, trap.damageType)})</em>` : '';
       lines.push(`<li><strong>${name}</strong>: ${passed ? 'Success' : 'Failure'}. ${text}${dmg}</li>`);
     }
     if (!lines.length) return;
@@ -228,6 +239,88 @@ class TrapAutomator {
       speaker: { alias: trap.name },
       content: `<p><strong>${esc(trap.name)}</strong></p><ul>${lines.join('')}</ul>`
     });
+  }
+
+  /**
+   * Resolve an attack roll trap: roll d20 + attackBonus against each token's
+   * AC. A natural 20 always hits and is a critical hit (damage dice are
+   * doubled); a natural 1 always misses. Each hit rolls its own damage,
+   * which is applied through the dnd5e actor API. Posts one chat card with
+   * every attack and its outcome.
+   * @param {Object} trap Trap data built by buildTrapData()
+   * @param {TokenDocument[]} tokenDocs Tokens the trap attacks
+   */
+  async resolveTrapAttack(trap, tokenDocs) {
+    if (!tokenDocs.length) return;
+    const esc = foundry.utils.escapeHTML;
+    const bonus = Number(trap.attackBonus) || 0;
+    const damageType = TrapAutomator.normalizeDamageType(trap.damageType);
+    const rolls = [];
+    const lines = [];
+    for (const tokenDoc of tokenDocs) {
+      const actor = tokenDoc.actor;
+      const attack = await new Roll(`1d20 + ${bonus}`).evaluate();
+      rolls.push(attack);
+      const natural = attack.dice?.[0]?.total;
+      const ac = Number(actor?.system?.attributes?.ac?.value);
+      const crit = natural === 20;
+      const hit = natural !== 1 && (crit || (Number.isFinite(ac) && attack.total >= ac));
+      let amount = 0;
+      let dmgRoll = null;
+      if (hit && trap.damageFormula) {
+        try {
+          dmgRoll = new Roll(trap.damageFormula);
+          if (crit) dmgRoll.alter(2, 0);
+          await dmgRoll.evaluate();
+          rolls.push(dmgRoll);
+          amount = dmgRoll.total;
+        } catch (err) {
+          console.error('Trap Automator: invalid damage formula', trap.damageFormula, err);
+          ui.notifications.error(`Trap Automator: "${trap.damageFormula}" is not a valid damage formula.`);
+          dmgRoll = null;
+        }
+      }
+      if (amount > 0 && actor) await TrapAutomator.applyTrapDamage(actor, amount, damageType);
+      const outcome = crit ? 'Critical hit!' : (hit ? 'Hit.' : 'Miss.');
+      const text = esc(hit ? (trap.failText || '') : (trap.successText || ''));
+      const vsAC = Number.isFinite(ac) ? ` vs AC ${ac}` : '';
+      const dmg = dmgRoll ? ` <em>(${dmgRoll.formula} = ${TrapAutomator.damageLabel(amount, trap.damageType)})</em>` : '';
+      lines.push(`<li><strong>${esc(tokenDoc.name ?? actor?.name ?? 'Unknown')}</strong>: attack ${attack.total}${vsAC}. ${outcome} ${text}${dmg}</li>`);
+    }
+    await ChatMessage.create({
+      speaker: { alias: trap.name },
+      rolls,
+      content: `<p><strong>${esc(trap.name)}</strong> attacks (+${bonus} to hit)</p>`
+        + (trap.flavor ? `<p>${esc(trap.flavor)}</p>` : '')
+        + `<ul>${lines.join('')}</ul>`
+    });
+  }
+
+  /**
+   * Describe an amount of damage for chat, e.g. "9 piercing damage".
+   * @param {number} amount Damage before resistances
+   * @param {string|null} type Damage type text from the trap
+   * @returns {string} Escaped HTML-safe label
+   */
+  static damageLabel(amount, type) {
+    if (!(amount > 0)) return 'no damage';
+    return `${amount}${type ? ` ${foundry.utils.escapeHTML(type)}` : ''} damage`;
+  }
+
+  /**
+   * Apply damage to an actor, reporting failures instead of throwing so one
+   * bad actor doesn't stop the rest of the trap from resolving.
+   * @param {Actor} actor Actor to damage
+   * @param {number} amount Damage before resistances
+   * @param {string|null} type dnd5e damage type key
+   */
+  static async applyTrapDamage(actor, amount, type) {
+    try {
+      await TrapAutomator.applyDamage(actor, amount, type);
+    } catch (err) {
+      console.error(`Trap Automator: failed to apply damage to ${actor.name}`, err);
+      ui.notifications.error(`Trap Automator: couldn't apply damage to ${actor.name}. See console for details.`);
+    }
   }
 
   /**
@@ -1052,6 +1145,57 @@ class TrapAutomator {
   }
 
   /**
+   * Render the trap definition defaults shared by the Add Trap and Edit Trap
+   * forms: how the trap attacks, its default attack bonus and save DC, and
+   * the default Detection DC. These pre-fill the Trap Details dialog when a
+   * trap is placed.
+   * @param {string} prefix Element id prefix, unique per form
+   * @param {Object} def Existing definition (empty for a new trap)
+   * @returns {string} HTML fragment
+   */
+  _renderTrapDefaultsFields(prefix, def) {
+    const isAttack = def.attackType === 'attack';
+    return `<div class="form-group">
+        <label for="${prefix}-attack-type">Default attack type:</label>
+        <select id="${prefix}-attack-type">
+          <option value="save"${isAttack ? '' : ' selected'}>Saving throw (vs DC)</option>
+          <option value="attack"${isAttack ? ' selected' : ''}>Attack roll (vs AC)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="${prefix}-dc">Default save DC:</label>
+        <input type="number" id="${prefix}-dc" min="1" max="30" value="${Number(def.defaultDC) || 10}" />
+      </div>
+      <div class="form-group">
+        <label for="${prefix}-attack-bonus">Default attack bonus:</label>
+        <input type="number" id="${prefix}-attack-bonus" min="-5" max="30" value="${Number(def.defaultAttackBonus ?? TrapAutomator.DEFAULT_ATTACK_BONUS)}" />
+      </div>
+      <div class="form-group">
+        <label for="${prefix}-detect-dc">Default Detection DC:</label>
+        <input type="number" id="${prefix}-detect-dc" min="1" max="40" value="${Number(def.defaultDetectionDC) || TrapAutomator.DEFAULT_DETECTION_DC}" />
+      </div>`;
+  }
+
+  /**
+   * Read the fields rendered by _renderTrapDefaultsFields.
+   * @param {jQuery} html Dialog root
+   * @param {string} prefix Element id prefix used when rendering
+   * @returns {{attackType: string, defaultDC: number, defaultAttackBonus: number, defaultDetectionDC: number}}
+   */
+  _readTrapDefaultsFields(html, prefix) {
+    const num = (sel, fallback) => {
+      const v = Number(html.find(sel).val());
+      return Number.isFinite(v) && html.find(sel).val() !== '' ? v : fallback;
+    };
+    return {
+      attackType: html.find(`#${prefix}-attack-type`).val() === 'attack' ? 'attack' : 'save',
+      defaultDC: num(`#${prefix}-dc`, 10),
+      defaultAttackBonus: num(`#${prefix}-attack-bonus`, TrapAutomator.DEFAULT_ATTACK_BONUS),
+      defaultDetectionDC: num(`#${prefix}-detect-dc`, TrapAutomator.DEFAULT_DETECTION_DC)
+    };
+  }
+
+  /**
    * Internal helper to render a hint set. Accepts an index and returns an
    * HTML string with inputs named using that index. Adds the class
    * "ta-hint-set" and data-idx attribute for later retrieval.
@@ -1127,16 +1271,17 @@ class TrapAutomator {
           ${saveOpts}
         </select>
       </div>
+      ${this._renderTrapDefaultsFields('ta-add-trap', {})}
       <div class="form-group">
         <label for="ta-add-trap-desc">Trap Description:</label>
         <textarea id="ta-add-trap-desc" name="ta-add-trap-desc" rows="2"></textarea>
       </div>
       <div class="form-group">
-        <label for="ta-add-trap-fail">Failure Text:</label>
+        <label for="ta-add-trap-fail">Failed save / hit text:</label>
         <input type="text" id="ta-add-trap-fail" name="ta-add-trap-fail" />
       </div>
       <div class="form-group">
-        <label for="ta-add-trap-success">Success Text:</label>
+        <label for="ta-add-trap-success">Successful save / miss text:</label>
         <input type="text" id="ta-add-trap-success" name="ta-add-trap-success" />
       </div>
       <hr/>
@@ -1166,6 +1311,7 @@ class TrapAutomator {
             }
             const name = html.find('#ta-add-trap-name').val().trim();
             const save = html.find('#ta-add-trap-save').val();
+            const defaults = this._readTrapDefaultsFields(html, 'ta-add-trap');
             const desc = html.find('#ta-add-trap-desc').val().trim();
             const failText = html.find('#ta-add-trap-fail').val().trim();
             const successText = html.find('#ta-add-trap-success').val().trim();
@@ -1197,7 +1343,7 @@ class TrapAutomator {
               name,
               category: catVal,
               defaultSave: save,
-              defaultDC: 10,
+              ...defaults,
               description: {
                 flavor: desc,
                 fail: failText,
@@ -1994,16 +2140,17 @@ class TrapAutomator {
         <label for="ta-edit-trap-save2">Default Save Ability:</label>
         <select id="ta-edit-trap-save2">${saveOpts}</select>
       </div>
+      ${this._renderTrapDefaultsFields('ta-edit-trap', def)}
       <div class="form-group">
         <label for="ta-edit-trap-desc2">Description:</label>
         <textarea id="ta-edit-trap-desc2" rows="2">${(def.description && def.description.flavor) || ''}</textarea>
       </div>
       <div class="form-group">
-        <label for="ta-edit-trap-fail2">Failure Text:</label>
+        <label for="ta-edit-trap-fail2">Failed save / hit text:</label>
         <input type="text" id="ta-edit-trap-fail2" value="${(def.description && def.description.fail) || ''}" />
       </div>
       <div class="form-group">
-        <label for="ta-edit-trap-success2">Success Text:</label>
+        <label for="ta-edit-trap-success2">Successful save / miss text:</label>
         <input type="text" id="ta-edit-trap-success2" value="${(def.description && def.description.success) || ''}" />
       </div>
       <hr/>
@@ -2020,6 +2167,7 @@ class TrapAutomator {
           callback: async html => {
             const newName = html.find('#ta-edit-trap-name2').val().trim();
             const newSave = html.find('#ta-edit-trap-save2').val();
+            const defaults = this._readTrapDefaultsFields(html, 'ta-edit-trap');
             const newDesc = html.find('#ta-edit-trap-desc2').val().trim();
             const newFail = html.find('#ta-edit-trap-fail2').val().trim();
             const newSuccess = html.find('#ta-edit-trap-success2').val().trim();
@@ -2040,7 +2188,7 @@ class TrapAutomator {
               name: newName || key,
               category: cat,
               defaultSave: newSave,
-              defaultDC: def.defaultDC || 10,
+              ...defaults,
               description: {
                 flavor: newDesc,
                 fail: newFail,
@@ -2420,26 +2568,51 @@ class TrapAutomator {
   }
 
   /**
-   * Prompt the GM to enter trap-specific details such as the saving throw
-   * difficulty class (DC), save ability, damage formula and type, whether
-   * damage is halved on success, and any additional effect description.
-   * Once entered the workflow asks the GM to draw the tile.
+   * Prompt the GM to enter trap-specific details: the Detection DC and the
+   * hint DCs derived from it, how the trap attacks (a saving throw against a
+   * DC, or an attack roll against AC), the damage formula and type, whether a
+   * successful save halves the damage, and any additional effect text. Once
+   * entered the workflow asks the GM to draw the tile.
    */
   openTrapDetailsDialog() {
     const def = this.definitions.trap[this.currentData.key];
+    const attackType = def.attackType === 'attack' ? 'attack' : 'save';
     const saveTypes = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
     const saveOptions = saveTypes
       .map(s => `<option value="${s}"${def.defaultSave && def.defaultSave.toLowerCase() === s ? ' selected' : ''}>${s.toUpperCase()}</option>`)
       .join('');
     const content = `<form>
+      ${this._renderDetectionFields(def.defaultDetectionDC)}
+      <hr/>
+      <h3>Attack</h3>
       <div class="form-group">
-        <label for="ta-dc">Save DC:</label>
-        <input id="ta-dc" name="ta-dc" type="number" min="1" max="30" value="${def.defaultDC || 10}" />
+        <label for="ta-attack-type">Trap attacks with:</label>
+        <select id="ta-attack-type" name="ta-attack-type">
+          <option value="save"${attackType === 'save' ? ' selected' : ''}>Saving throw (vs DC)</option>
+          <option value="attack"${attackType === 'attack' ? ' selected' : ''}>Attack roll (vs AC)</option>
+        </select>
       </div>
-      <div class="form-group">
-        <label for="ta-save-type">Save ability:</label>
-        <select id="ta-save-type" name="ta-save-type">${saveOptions}</select>
+      <div id="ta-save-fields"${attackType === 'save' ? '' : ' style="display:none;"'}>
+        <div class="form-group">
+          <label for="ta-save-type">Save ability:</label>
+          <select id="ta-save-type" name="ta-save-type">${saveOptions}</select>
+        </div>
+        <div class="form-group">
+          <label for="ta-dc">Save DC:</label>
+          <input id="ta-dc" name="ta-dc" type="number" min="1" max="30" value="${Number(def.defaultDC) || 10}" />
+        </div>
+        <div class="form-group">
+          <label><input id="ta-half" name="ta-half" type="checkbox" /> Half damage on a successful save</label>
+        </div>
       </div>
+      <div id="ta-attack-fields"${attackType === 'attack' ? '' : ' style="display:none;"'}>
+        <div class="form-group">
+          <label for="ta-attack-bonus">Attack bonus:</label>
+          <input id="ta-attack-bonus" name="ta-attack-bonus" type="number" min="-5" max="30" value="${Number(def.defaultAttackBonus ?? TrapAutomator.DEFAULT_ATTACK_BONUS)}" />
+        </div>
+        <p class="hint">Rolled as d20 + bonus against each token's AC. A natural 20 is a critical hit (double dice) and a natural 1 always misses.</p>
+      </div>
+      <hr/>
       <div class="form-group">
         <label for="ta-damage">Damage formula:</label>
         <input id="ta-damage" name="ta-damage" type="text" placeholder="e.g. 2d6 + 3" />
@@ -2449,21 +2622,21 @@ class TrapAutomator {
         <input id="ta-damage-type" name="ta-damage-type" type="text" placeholder="e.g. slashing" />
       </div>
       <div class="form-group">
-        <label><input id="ta-half" name="ta-half" type="checkbox" /> Half damage on success</label>
-      </div>
-      <div class="form-group">
         <label for="ta-effect">Additional effect (optional):</label>
         <input id="ta-effect" name="ta-effect" type="text" />
       </div>
     </form>`;
-    TrapAutomator.makeDialog({
+    const dlg = TrapAutomator.makeDialog({
       title: 'Trap Details',
       content,
       buttons: {
         create: {
           label: 'Continue',
           callback: html => {
-            this.currentData.dc = Number(html.find('#ta-dc').val());
+            Object.assign(this.currentData, this._readDetectionFields(html));
+            this.currentData.attackType = html.find('#ta-attack-type').val() === 'attack' ? 'attack' : 'save';
+            this.currentData.attackBonus = Number(html.find('#ta-attack-bonus').val()) || 0;
+            this.currentData.dc = Number(html.find('#ta-dc').val()) || 10;
             this.currentData.saveType = html.find('#ta-save-type').val();
             this.currentData.damage = html.find('#ta-damage').val().trim();
             this.currentData.damageType = html.find('#ta-damage-type').val().trim();
@@ -2478,30 +2651,46 @@ class TrapAutomator {
         }
       },
       default: 'create'
-    }).render(true);
+    });
+    dlg.render(true);
+    // Show the save or attack fields to match the selected attack type.
+    $(document).off('change.taAttackType');
+    $(document).on('change.taAttackType', '#ta-attack-type', ev => {
+      const isAttack = ev.target.value === 'attack';
+      $('#ta-save-fields').toggle(!isAttack);
+      $('#ta-attack-fields').toggle(isAttack);
+    });
+    this._bindDetectionFields(dlg);
+    TrapAutomator.onDialogClose(dlg, () => {
+      $(document).off('change.taAttackType');
+    });
   }
 
   /**
-   * Prompt the GM to enter additional description for a cache. Caches do
-   * not involve saving throws or damage. After entering the description
-   * the workflow asks the GM to draw the tile.
+   * Prompt the GM to enter the cache's Detection DC (which sets the hint
+   * DCs) and an optional description. Caches do not involve saving throws or
+   * damage. After entering the details the workflow asks the GM to draw the
+   * tile.
    */
   openCacheDetailsDialog() {
     const def = this.definitions.cache[this.currentData.key];
     const placeholder = def && def.description && def.description.found ? def.description.found : '';
     const content = `<form>
+      ${this._renderDetectionFields(def?.defaultDetectionDC)}
+      <hr/>
       <div class="form-group">
         <label for="ta-cache-desc">Describe the cache contents (optional):</label>
-        <textarea id="ta-cache-desc" name="ta-cache-desc" rows="3" style="width:100%" placeholder="${placeholder}"></textarea>
+        <textarea id="ta-cache-desc" name="ta-cache-desc" rows="3" style="width:100%" placeholder="${foundry.utils.escapeHTML(placeholder)}"></textarea>
       </div>
     </form>`;
-    TrapAutomator.makeDialog({
+    const dlg = TrapAutomator.makeDialog({
       title: 'Cache Details',
       content,
       buttons: {
         create: {
           label: 'Continue',
           callback: html => {
+            Object.assign(this.currentData, this._readDetectionFields(html));
             this.currentData.description = html.find('#ta-cache-desc').val().trim();
             this.promptDrawTile();
           }
@@ -2512,7 +2701,80 @@ class TrapAutomator {
         }
       },
       default: 'create'
-    }).render(true);
+    });
+    dlg.render(true);
+    this._bindDetectionFields(dlg);
+  }
+
+  /**
+   * Compute the default DC for each hint tier from a Detection DC. The
+   * easiest hint (+2) sits at the Detection DC itself and the others keep
+   * their relative spacing above it, so a Detection DC of 15 gives
+   * 15 / 17 / 19 / 23.
+   * @param {number} detectionDC Passive Perception needed to notice the trap
+   * @returns {Object<string, number>} Map of hint tier to DC
+   */
+  static hintDCsFor(detectionDC) {
+    const base = Number(detectionDC) || TrapAutomator.DEFAULT_DETECTION_DC;
+    const dcs = {};
+    for (const tier of TrapAutomator.HINT_TIERS) dcs[tier] = base + TrapAutomator.HINT_OFFSETS[tier];
+    return dcs;
+  }
+
+  /**
+   * Render the Detection DC input plus one DC input per hint tier. The hint
+   * DCs start from hintDCsFor() and can be adjusted individually.
+   * @param {number} [detectionDC] Default Detection DC
+   * @returns {string} HTML fragment
+   */
+  _renderDetectionFields(detectionDC) {
+    const base = Number(detectionDC) || TrapAutomator.DEFAULT_DETECTION_DC;
+    const dcs = TrapAutomator.hintDCsFor(base);
+    const tierInputs = TrapAutomator.HINT_TIERS.map(tier => {
+      const id = `ta-hint-dc-${tier.slice(1)}`;
+      return `<div class="form-group">
+        <label for="${id}">Hint ${tier} DC:</label>
+        <input id="${id}" name="${id}" type="number" min="1" max="40" value="${dcs[tier]}" />
+      </div>`;
+    }).join('');
+    return `<h3>Detection</h3>
+      <div class="form-group">
+        <label for="ta-detect-dc">Detection DC (passive Perception):</label>
+        <input id="ta-detect-dc" name="ta-detect-dc" type="number" min="1" max="40" value="${base}" />
+      </div>
+      <p class="hint">Each hint token is only visible to characters whose passive Perception meets its DC. Changing the Detection DC resets the hint DCs below.</p>
+      ${tierInputs}`;
+  }
+
+  /**
+   * Keep the hint DC inputs in step with the Detection DC input while the
+   * dialog is open, and remove the handler when it closes.
+   * @param {Application} dlg The dialog containing the detection fields
+   */
+  _bindDetectionFields(dlg) {
+    $(document).off('input.taDetectDC change.taDetectDC');
+    $(document).on('input.taDetectDC change.taDetectDC', '#ta-detect-dc', ev => {
+      const dcs = TrapAutomator.hintDCsFor(ev.target.value);
+      for (const tier of TrapAutomator.HINT_TIERS) $(`#ta-hint-dc-${tier.slice(1)}`).val(dcs[tier]);
+    });
+    TrapAutomator.onDialogClose(dlg, () => {
+      $(document).off('input.taDetectDC change.taDetectDC');
+    });
+  }
+
+  /**
+   * Read the detection fields rendered by _renderDetectionFields.
+   * @param {jQuery} html Dialog root
+   * @returns {{detectionDC: number, hintDCs: Object<string, number>}}
+   */
+  _readDetectionFields(html) {
+    const detectionDC = Number(html.find('#ta-detect-dc').val()) || TrapAutomator.DEFAULT_DETECTION_DC;
+    const defaults = TrapAutomator.hintDCsFor(detectionDC);
+    const hintDCs = {};
+    for (const tier of TrapAutomator.HINT_TIERS) {
+      hintDCs[tier] = Number(html.find(`#ta-hint-dc-${tier.slice(1)}`).val()) || defaults[tier];
+    }
+    return { detectionDC, hintDCs };
   }
 
   /**
@@ -2571,9 +2833,9 @@ class TrapAutomator {
       console.error('Trap Automator: Failed to update tile flags', err);
       ui.notifications.error('Trap Automator: Failed to update the tile. See console for details.');
     }
-    // Spawn linked hint tokens around the tile.
+    // Spawn hint tokens around the tile, each hidden at its own DC.
     try {
-      await this.spawnHintsAroundTile(tileDoc, hints);
+      await this.spawnHintsAroundTile(tileDoc, hints, trapData.hintDCs);
     } catch (err) {
       console.error('Trap Automator: Failed to spawn hint tokens', err);
       ui.notifications.error('Trap Automator: Failed to create hint tokens. See console for details.');
@@ -2630,22 +2892,30 @@ class TrapAutomator {
     } else {
       result.flavor = '';
     }
+    // Detection applies to traps and caches alike: the Detection DC is the
+    // passive Perception needed to notice it, and each hint tier has its own
+    // DC (by default anchored to the Detection DC).
+    result.detectionDC = this.currentData.detectionDC || TrapAutomator.DEFAULT_DETECTION_DC;
+    result.hintDCs = this.currentData.hintDCs || TrapAutomator.hintDCsFor(result.detectionDC);
     if (type === 'trap') {
-      result.saveType = (this.currentData.saveType || def.defaultSave || 'dex').toLowerCase();
-      // Record the actual DC used for rolls. Store it both as a hidden
-      // property (for modules that prefer to keep the DC secret) and on the
-      // top level so macros that display it (e.g. the provided macro) can
-      // access it. Previously the DC was omitted, causing "DC undefined"
-      // to appear in chat. Now we explicitly set it.
-      const actualDC = this.currentData.dc || 10;
+      // attackType "save": each victim rolls a saving throw against DC.
+      // attackType "attack": the trap rolls d20 + attackBonus against AC.
+      const isAttack = this.currentData.attackType === 'attack';
+      result.attackType = isAttack ? 'attack' : 'save';
+      result.attackBonus = isAttack ? (Number(this.currentData.attackBonus) || 0) : null;
+      result.saveType = isAttack ? null : (this.currentData.saveType || def.defaultSave || 'dex').toLowerCase();
+      // DC is kept on both keys for compatibility with older trap data.
+      const actualDC = isAttack ? null : (this.currentData.dc || 10);
       result.hiddenDC = actualDC;
       result.DC = actualDC;
       result.damageFormula = this.currentData.damage || '';
-      result.halfDamageOnSuccess = !!this.currentData.half;
+      result.halfDamageOnSuccess = !isAttack && !!this.currentData.half;
       result.damageType = this.currentData.damageType || null;
+      // failText is shown when the trap gets you (failed save or hit),
+      // successText when it doesn't (successful save or miss).
       const effectText = this.currentData.effect ? ' ' + this.currentData.effect : '';
       result.failText = `${def.description.fail || ''}${effectText}`;
-      result.successText = `${def.description.success || ''}${this.currentData.half ? ' You take half damage.' : ''}`;
+      result.successText = `${def.description.success || ''}${result.halfDamageOnSuccess ? ' You take half damage.' : ''}`;
     } else {
       // Cache
       result.saveType = null;
@@ -2695,15 +2965,21 @@ class TrapAutomator {
   }
 
   /**
-   * Spawn four linked hint tokens around the given tile. Each token is
-   * created from an actor named "Hint +N" where N is the difficulty
-   * modifier. The tokens are positioned above, right, below and left of
-   * the tile with a small padding. If any actor is missing a warning is
-   * shown.
+   * Spawn four hint tokens around the given tile. Each token is created from
+   * an actor named "Hint +N" where N is the hint tier. The tokens are
+   * positioned above, right, below and left of the tile with a small
+   * padding. If any actor is missing a warning is shown.
+   *
+   * Tokens are unlinked so each one can carry its own Stealthy value: when a
+   * DC is given for the tier, the token's Hiding effect is overridden (via
+   * the token's actor delta) with flags.stealthy.stealth = DC. Stealthy shows
+   * a hidden token to a viewer whose passive Perception is at least that
+   * value.
    * @param {TileDocument} tileDoc The tile around which to spawn hints
-   * @param {Object} hintsByDiff Map of diff levels to hint strings
+   * @param {Object} hintsByDiff Map of hint tier to hint string
+   * @param {Object<string, number>} [hintDCs] Map of hint tier to DC
    */
-  async spawnHintsAroundTile(tileDoc, hintsByDiff) {
+  async spawnHintsAroundTile(tileDoc, hintsByDiff, hintDCs = null) {
     const scene = canvas.scene;
     const grid = canvas.grid.size;
     const pad = 40;
@@ -2736,7 +3012,7 @@ class TrapAutomator {
       const spot = spots[i % spots.length];
       const data = foundry.utils.mergeObject(proto, {
         actorId: actor.id,
-        actorLink: true,
+        actorLink: false,
         name: hintText,
         displayName: CONST.TOKEN_DISPLAY_MODES.HOVER,
         x: Math.round(spot.x - tokenPixelW / 2),
@@ -2745,11 +3021,45 @@ class TrapAutomator {
       }, { inplace: false, insertKeys: true, overwrite: true });
       delete data.actorData;
       delete data._id;
+      const dc = Number(hintDCs?.[diff]);
+      if (dc) {
+        data.delta = { effects: [TrapAutomator.hintStealthEffect(actor, dc)] };
+        // The shipped hint actors carry "stealth on create" flags from
+        // visibility modules, which would re-roll stealth and replace the DC.
+        for (const scope of ['min-visibility-distance', 'the-horses-actor-visibility-tools']) {
+          if (data.flags?.[scope]?.stealthOnCreate) data.flags[scope].stealthOnCreate = false;
+        }
+      }
       createData.push(data);
     }
     if (createData.length) {
       await scene.createEmbeddedDocuments('Token', createData);
     }
+  }
+
+  /**
+   * Build the Stealthy "hidden" effect for a hint token at the given DC. If
+   * the hint actor already has a Stealthy effect (the shipped actors have a
+   * "Hiding" effect), reuse its id so the token's delta overrides it rather
+   * than adding a second one; otherwise create a new effect. Stealthy finds
+   * the effect by its flags.stealthy.stealth value.
+   * @param {Actor} actor The "Hint +N" actor
+   * @param {number} dc Passive Perception needed to see the hint
+   * @returns {Object} ActiveEffect source data
+   */
+  static hintStealthEffect(actor, dc) {
+    const base = actor.effects?.find(e => e.flags?.stealthy?.stealth !== undefined
+      || e.statuses?.has?.('hiding') || ['Hiding', 'Hidden'].includes(e.name));
+    const effect = base ? base.toObject() : {
+      _id: foundry.utils.randomID(),
+      name: 'Hidden',
+      img: 'icons/svg/cowled.svg',
+      statuses: [],
+      changes: []
+    };
+    effect.disabled = false;
+    effect.flags = foundry.utils.mergeObject(effect.flags ?? {}, { stealthy: { stealth: dc } }, { inplace: false });
+    return effect;
   }
 }
 

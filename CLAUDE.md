@@ -20,13 +20,17 @@ There is no `package.json`, bundler, linter or test suite. What's in the repo sh
 1. Load time: `Hooks.on('setupTileActions')` registers the MATT action `trap-automator.spring` ("Spring Trap"). `Hooks.on('monks-tokenbar.updateRoll')` listens for finished roll requests.
 2. `init`: `TrapAutomator.registerSettings()` registers `customDefs` (world, Object), creates `game.trapAutomator` and registers the keybinding (default **Shift+T**, GM only).
 3. `ready`: fetches `modules/trap-automator/definitions/builtin-defs.json` into `builtinDefs`, then `rebuildDefinitions()` deep-merges it with `customDefs` and fills in the default triggers. Finally, the active GM runs `upgradeTrapTiles()`, which replaces old `runmacro` actions on trap tiles with the Spring Trap action and sets `restriction: 'all'`.
-4. Hotkey → `openInitialDialog()` → chain of dialogs (type → category/sub-category → trap → location → trigger → details). The choices build up in `this.currentData`.
+4. Hotkey → `openInitialDialog()` → chain of dialogs (type → category/sub-category → trap → location → trigger → details). The choices build up in `this.currentData`. The details dialogs (`openTrapDetailsDialog` / `openCacheDetailsDialog`) collect the **Detection DC** and per-tier **hint DCs** (`_renderDetectionFields` / `_readDetectionFields`; defaults from `hintDCsFor()`: +2 → DC, +4 → DC+2, +6 → DC+4, +10 → DC+8). For traps they also collect the **attack type**: `save` (ability + DC + half) or `attack` (attack bonus).
 5. `promptDrawTile()` registers a one-shot `createTile` hook. `onTileCreated()` then:
    - builds `trapData` (`buildTrapData()`) and writes it to `flags['trap-automator'].trapData`,
    - for traps only, writes `flags['monks-active-tiles']` with an `enter` trigger, `restriction: 'all'` (any token) and a single `trap-automator.spring` action with empty `data`,
-   - `spawnHintsAroundTile()` creates linked tokens from world actors found **by name** (`Hint +2` …), each named after its hint text.
-6. A token enters the tile. MATT runs the Spring Trap action **on the GM client**, which calls `springTrap(tile, tokens)`. That reads `trapData` from the tile and calls `game.MonksTokenBar.requestRoll(tokens, { request: 'save:<ability>', dc, showdc: false, silent: true, fastForward: false, trapAutomator: { tileUuid, trap } })`. A roll card is posted to chat; owners roll from it, and the GM rolls for NPCs.
+   - `spawnHintsAroundTile(tile, hints, hintDCs)` creates **unlinked** tokens from world actors found **by name** (`Hint +2` …), each named after its hint text. Each token's `delta.effects` overrides the actor's Stealthy *Hiding* effect (same `_id`, built by `hintStealthEffect()`) with `flags.stealthy.stealth = <hint DC>`, and the shipped `stealthOnCreate` flags (`min-visibility-distance`, `the-horses-actor-visibility-tools`) are switched off so they don't re-roll it.
+6. A token enters the tile. MATT runs the Spring Trap action **on the GM client**, which calls `springTrap(tile, tokens)`. That reads `trapData` from the tile. For `attackType: 'attack'` it calls `resolveTrapAttack()`, which rolls `1d20 + attackBonus` against each actor's `system.attributes.ac.value` (a natural 20 crits with `Roll#alter(2, 0)` to double the dice; a natural 1 misses), applies damage per hit and posts one card; there's no TokenBar involvement. Otherwise (`save`, or legacy data with no `attackType`) it calls `game.MonksTokenBar.requestRoll(tokens, { request: 'save:<ability>', dc, showdc: false, silent: true, fastForward: false, trapAutomator: { tileUuid, trap } })`. A roll card is posted to chat; owners roll from it, and the GM rolls for NPCs.
 7. When every token on the card has rolled, TokenBar fires `monks-tokenbar.updateRoll(result, message)`. `onTokenBarRollComplete()` (active GM only, once per message via `flags['trap-automator'].resolved`) reads the trap back from `message.flags['monks-tokenbar'].options.trapAutomator`, then `resolveTrapDamage()` rolls damage once, applies it with dnd5e's `actor.applyDamage([{ value, type, properties }])` (full on fail, half on success if `halfDamageOnSuccess`) and posts a summary.
+
+### Trap data (`flags['trap-automator'].trapData`)
+
+Built by `buildTrapData()`: `name`, `type` (`trap`|`cache`), `flavor`, `detectionDC`, `hintDCs` (`{ '+2': 15, … }`). For traps it also stores `attackType` (`save`|`attack`), `attackBonus` (attack only), `saveType` + `DC`/`hiddenDC` (save only), `damageFormula`, `damageType`, `halfDamageOnSuccess` (save only), `failText` (failed save or hit) and `successText` (successful save or miss). For caches it stores `foundText`. Tiles from before this change have no `attackType`, `detectionDC` or `hintDCs`; treat a missing `attackType` as `save`.
 
 ### Definitions schema (`builtin-defs.json` / `customDefs`)
 
@@ -35,6 +39,7 @@ There is no `package.json`, bundler, linter or test suite. What's in the repo sh
   "trap": {
     "<slug>": {
       "name": "…", "category": "<category-or-subcategory>", "defaultSave": "dex", "defaultDC": 10,
+      "attackType": "save|attack", "defaultAttackBonus": 5, "defaultDetectionDC": 15,   // all optional
       "description": { "flavor": "…{location}…", "fail": "…", "success": "…" },
       "hints": { "floor|wall|ceiling|other": [ { "+2": "…", "+4": "…", "+6": "…", "+10": "…" } ] }
     }
@@ -45,6 +50,7 @@ There is no `package.json`, bundler, linter or test suite. What's in the repo sh
 }
 ```
 
+- The Add/Edit Trap forms read and write the optional defaults with `_renderTrapDefaultsFields` / `_readTrapDefaultsFields`. Nine built-in single-strike traps (turrets, blades, pendulums, snakes) are `attack` at +5; the rest are saves.
 - `hints[loc]` may also use a legacy shape, `{ "+2": [..], "+4": [..] }`. Both `getHints()` and the edit forms accept either.
 - Primary categories are `generic`, `sci-fi`, `magical`, `natural` and `grimdark`. `categorizeCategory()` maps a category to `{primary, sub}`: first via custom `categories`, then a hard-coded grimdark sub-category list, then regexes, and anything left over becomes `generic` (for example `misc`).
 - `{trigger}` and `{location}` placeholders in `flavor` are stripped by `cleanFlavorText()`, and the final text is rebuilt as `You <trigger> <location phrase>. <description>`.
@@ -92,14 +98,15 @@ To check syntax without Foundry, run `node --check scripts/trap-automator.js`. T
 - `upstream` is the original, `ryanw341/trap-automator`.
 - **Releases are published from the fork** (since v1.0.8). `module.json`'s `manifest` and `download` URLs, and the README install URL, point at `RaxiroCA/trap-automator`.
 
-## Monk's Active Tiles / TokenBar integration notes
+## Monk's Active Tiles / TokenBar / Stealthy integration notes
 
-Verified against the MATT and TokenBar sources (both v14.01) and dnd5e `actor.mjs`:
+Verified against the MATT and TokenBar sources (both v14.01), the Stealthy source (v14.0.0) and dnd5e `actor.mjs`:
 
 - **MATT trigger flags** live at `flags['monks-active-tiles']`. Token restriction is `restriction: 'gm' | 'player'`, and any other value means no restriction. There is no `restrictedTokens` key (older versions of this module wrote one, and MATT ignored it).
 - **Custom actions:** register them in the `setupTileActions` hook with `app.registerTileGroup(ns, name)` / `app.registerTileAction(ns, key, { name, ctrls, fn, content })`. `ns` must be an installed module id. MATT calls the hook with `Hooks.call` during its setup, so register the listener at load time. Tile actions run on the GM: player clients forward the trigger over a socket, and only `game.user.isTheGM` executes it. `fn` receives `{ tile, tokens, action, ... }`, where `tokens` are TokenDocuments.
 - **TokenBar** `requestRoll(tokens, options)` needs canvas `Token` placeables (or actors), so the GM must be viewing the trap's scene. With `silent: true`, it posts the chat card directly instead of opening the request dialog. `options` (including our `trapAutomator` key) is stored at `message.flags['monks-tokenbar'].options`. `options.callback` only lives in memory, so it's lost on reload; we use the hook instead.
 - **`monks-tokenbar.updateRoll`** fires on GM clients whenever the message is updated after all tokens have rolled, so it can fire more than once. `tokenresults[]` has `{ uuid (TokenDocument), passed, roll, name, actor }`.
+- **Stealthy** (v14.0.0, dnd5e engine) finds a token's stealth on the first enabled effect with `flags.stealthy.stealth` (or a name in its hidden aliases). A viewer sees the token when its perception value is **greater than** the stealth value; with no banked Perception, the value is passive Perception + 1, so passive Perception ≥ DC sees it. A banked active Perception roll is never lower than passive.
 - **dnd5e** `applyDamage(damages, options)` takes `DamageDescription[]` (`{ value, type, properties: Set }`) and applies resistances, immunities and temporary HP. A plain number skips resistances.
 - MATT 14.x and TokenBar 14.x require Foundry v14. v13 users need older releases of both.
 

@@ -3,6 +3,8 @@
     "autoturret": {
       "name": "Autoturret",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "A concealed lasgun turret emerges from the {location} and sprays crimson beams at you!",
         "fail": "You're riddled by las-fire.",
@@ -887,6 +889,8 @@
     "electro_mauler": {
       "name": "Electro Mauler",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "As {trigger} completes, heavy servo\u2011arms lunge out from the {location},\ncrackling with electricity and poised to pummel intruders!",
         "fail": "You are struck by the electrified mauler arms, suffering grievous blows.",
@@ -1091,6 +1095,8 @@
     "gauss_flayer": {
       "name": "Gauss Flayer Trap",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "When {trigger} is activated, a hidden gauss flayer array in the {location} fires\nemerald beams that strip matter from your body!",
         "fail": "The gauss beams rake across you, dissolving flesh and armor.",
@@ -1432,6 +1438,8 @@
       "name": "Ork Choppa Trap",
       "category": "greenskins",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "As you trigger {trigger}, a crude device swings jagged scrap blades from the\n{location}, roaring with savage glee!",
         "fail": "You are hacked by rusty blades and pelted with shrapnel.",
@@ -1568,6 +1576,8 @@
       "name": "Skull Grinder",
       "category": "misc",
       "defaultSave": "str",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "When {trigger} is tripped, a massive spiked weight swings down from the\n{location}, seeking to grind bones and skulls.",
         "fail": "You are struck by the crushing weight, bones crunching under the spikes.",
@@ -1704,6 +1714,8 @@
       "name": "Servo Guillotine",
       "category": "imperial",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "As you trigger {trigger}, a servo\u2011driven mechanism swings down from the\n{location}, threatening to slice you in two!",
         "fail": "The heavy edge finds its mark, cutting through armour and flesh.",
@@ -1840,6 +1852,8 @@
       "name": "Bolter Barrage",
       "category": "imperial",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "As {trigger} completes, concealed ports in the {location} open and unleash a hail\nof high\u2011velocity rounds.",
         "fail": "You are peppered by a barrage of projectiles.",
@@ -2112,6 +2126,8 @@
       "name": "Choppa Pendulum",
       "category": "greenskins",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "As you disturb {trigger}, a massive weighted blade swings down from the\n{location}, cleaving through the air!",
         "fail": "The heavy blade slams into you, cleaving deep.",
@@ -3880,6 +3896,8 @@
       "name": "Snake Pit",
       "category": "natural",
       "defaultSave": "dex",
+      "attackType": "attack",
+      "defaultAttackBonus": 5,
       "description": {
         "flavor": "You {trigger}{location} and disturb a nest of serpents, causing them to strike!",
         "fail": "You are bitten repeatedly by the agitated snakes.",

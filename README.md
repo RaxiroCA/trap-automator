@@ -118,9 +118,10 @@ The GM must be viewing the scene when a saving throw trap springs, because Token
 
 Go to **Game Settings → Configure Settings → The Horse's Trap Automator** and click **Open Trap Manager** (GM only). You can also open it from the **Trap Manager** button in the Shift + T menu.
 
-- **Traps / Caches** tabs list every type, grouped by category and searchable. Each one is labelled **Built-in**, **Modified** (a built-in you've edited) or **Custom** (one you created).
-- **Edit any type:** its name, category, description and the hit/miss (or success/failure) text, plus the defaults used when placing it: Detection DC, saving throw or attack roll, save ability and DC, or attack bonus.
-- **Hint sets:** each set has one hint per tier (+2, +4, +6, +10), and the DC each hint will get is shown next to it. Add as many sets as you like; one is picked at random each time the trap is placed. Empty sets are ignored, and partly filled sets are flagged when you save.
+- **Traps / Caches** tabs list every type in collapsible category groups. Search by name or category, or filter with the **All / Built-in / Modified / Custom / Hidden** chips. Icons show whether a trap uses a saving throw or an attack roll, and whether it's built-in, modified by you or one of your own.
+- **Edit any type:** its name, category, description and the hit/miss (or success/failure) text, plus the defaults used when placing it: Detection DC, saving throw or attack roll, save ability and DC, or attack bonus. A **preview** shows the exact sentence players will read in chat, and a **DC ladder** shows where each hint sits on the 5e scale (Easy 10 to Nearly Impossible 30).
+- **Hint sets:** each set has one hint per tier (+2, +4, +6, +10), shown with the DC it will get and a short note on what that tier should reveal. A meter shows how many of the four hints are filled in. Add, **duplicate** or remove sets; one is picked at random each time the trap is placed. The bar at the bottom lists anything that needs fixing before you can save. **Ctrl + S** saves.
+- **Duplicate** (top right of the editor) starts a new type from a copy of the one you're viewing.
 - **New Trap / New Cache** creates your own type. Type a new category name to create a category.
 - **Hide when placing** (or the eye icon in the list) removes a type from the placement menus without deleting it. This is how you remove built-in traps you don't want.
 - **Revert to built-in** throws away your edits to a built-in type. **Delete** removes a type you created.

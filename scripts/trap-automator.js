@@ -846,18 +846,32 @@ class TrapAutomator {
     s = s.replace(/^As you [^,]*?,\s*/i, '');
     s = s.replace(/^When you trigger \{trigger\},\s*/i, '');
     s = s.replace(/^When \{trigger\}[^,]*?,\s*/i, '');
-    // Remove patterns like "You {trigger}{location} and …" or "You {trigger}
-    // and …" which would duplicate the trigger text.
-    s = s.replace(/^You\s*\{trigger\}\s*\{location\}\s*and\s*/i, '');
-    s = s.replace(/^You\s*\{trigger\}\s*and\s*/i, '');
+    // Remove patterns like "You {trigger}{location} and …", "You disturb
+    // {trigger} and …" or "You {trigger} …" which would duplicate the
+    // trigger text.
+    s = s.replace(/^You\b[^,.!?{]*\{trigger\}\s*(?:\{location\}\s*)?and\s+/i, '');
     s = s.replace(/^You\s*\{trigger\}\s*\{location\}\s*/i, '');
+    // Other lead-in clauses that mention the trigger, e.g. "As {trigger} is
+    // tripped," or "Upon triggering {trigger},".
+    s = s.replace(/^(?:As|Upon|When|Once|After|On)\b[^,.!?]*\{trigger\}[^,.!?]*,\s*/i, '');
+    // With no comma, drop the words up to the trigger ("Breaking the
+    // {trigger} completes…", "The {trigger} activates…").
+    s = s.replace(/^[^,.!?{]*\{trigger\}\s+/i, '');
+    // Remove the preposition that introduced the location along with it, so
+    // "pours out of the {location}!" becomes "pours out!" rather than
+    // "pours out of the !".
+    s = s.replace(/\s*\b(?:in|on|from|of|into|onto|at|under|beneath|behind|across|through|along|inside|within|off|over|towards?)\s+(?:the\s+)?\{location\}/gi, '');
+    // A location used as a noun ("the {location} splits open") becomes a
+    // neutral word, since the location is already named in the opening.
+    s = s.replace(/\bthe\s+\{location\}/gi, 'the surface');
     // Remove remaining placeholder markers
     s = s.replace(/\{trigger\}/gi, '').replace(/\{location\}/gi, '');
     // Remove orphaned prepositional phrases that refer to the location
     // e.g. "in the " or "on the " that remain after {location} removal.
     s = s.replace(/\s+(in|on|from)\s+the\s*,?/gi, ' ');
-    // Compress consecutive whitespace to a single space
-    s = s.replace(/\s+/g, ' ');
+    // Compress consecutive whitespace to a single space, and drop any space
+    // left in front of punctuation by the removals above.
+    s = s.replace(/\s+/g, ' ').replace(/\s+([!.,;?])/g, '$1');
     // Remove leading "You " if still present
     if (/^You\s+/i.test(s)) s = s.replace(/^You\s+/i, '');
     // Trim any leading/trailing punctuation and whitespace
@@ -2876,6 +2890,39 @@ class TrapAutomator {
   }
 
   /**
+   * Compose the text players read when a trap springs:
+   * "You <trigger> <location phrase>. <cleaned description>". The trap's own
+   * description has its {trigger}/{location} placeholders and lead-in clauses
+   * stripped by cleanFlavorText(). Also used by the Trap Manager preview.
+   * @param {string} flavor Raw description from the definition
+   * @param {string} [trigger] Trigger phrase, e.g. "step on a pressure plate"
+   * @param {string} [location] floor | wall | ceiling | other
+   * @returns {string}
+   */
+  composeFlavor(flavor, trigger = '', location = '') {
+    if (!flavor) return '';
+    // Clean the base description by stripping placeholder markers and
+    // removing leading clauses that reference the trigger or location.
+    let descPart = this.cleanFlavorText(flavor);
+    // If the cleaned description begins with a sensory verb (e.g. "hear",
+    // "feel", "sense", etc.), prepend "You " so the sentence reads
+    // naturally. Without this, messages like "Hear a deafening rumble…"
+    // would lack a subject when appended after the trigger and location.
+    const sensoryVerbs = ['hear', 'feel', 'sense', 'see', 'notice', 'spot', 'detect', 'smell', 'taste', 'observe', 'perceive', 'catch'];
+    const firstWord = descPart.split(/s+/)[0]?.toLowerCase() || '';
+    if (sensoryVerbs.includes(firstWord)) {
+      descPart = `You ${descPart}`;
+    }
+    // Map location keys to phrases. Omit phrase for "other".
+    const locMap = { floor: 'on the floor', wall: 'on the wall', ceiling: 'on the ceiling', other: '' };
+    const locPhrase = locMap[location] || '';
+    if (!trigger) return descPart.trim();
+    // Compose the final narrative: You <trigger> <location phrase>. <clean description>
+    const prefix = `You ${trigger}${locPhrase ? ' ' + locPhrase : ''}.`;
+    return `${prefix} ${descPart}`.trim();
+  }
+
+  /**
    * Construct a serialisable object describing the trap or cache. For traps
    * this includes the name, flavour text, save type, DC, damage and
    * success/failure texts. For caches only the name and found text are
@@ -2892,34 +2939,7 @@ class TrapAutomator {
       type
     };
     // Normalise flavour text using the definition's description template.
-    if (def.description && def.description.flavor) {
-      // Clean the base description by stripping placeholder markers and
-      // removing leading clauses that reference the trigger or location.
-      let descPart = this.cleanFlavorText(def.description.flavor);
-      // If the cleaned description begins with a sensory verb (e.g. "hear",
-      // "feel", "sense", etc.), prepend "You " so the sentence reads
-      // naturally. Without this, messages like "Hear a deafening rumble…"
-      // would lack a subject when appended after the trigger and location.
-      const sensoryVerbs = ['hear', 'feel', 'sense', 'see', 'notice', 'spot', 'detect', 'smell', 'taste', 'observe', 'perceive', 'catch'];
-      const firstWord = descPart.split(/\s+/)[0]?.toLowerCase() || '';
-      if (sensoryVerbs.includes(firstWord)) {
-        descPart = `You ${descPart}`;
-      }
-      // Map location keys to phrases. Omit phrase for "other".
-      const locMap = { floor: 'on the floor', wall: 'on the wall', ceiling: 'on the ceiling', other: '' };
-      const locPhrase = locMap[location] || '';
-      let flavour;
-      if (trigger) {
-        // Compose the final narrative: You <trigger> <location phrase>. <clean description>
-        const prefix = `You ${trigger}${locPhrase ? ' ' + locPhrase : ''}.`;
-        flavour = `${prefix} ${descPart}`.trim();
-      } else {
-        flavour = `${descPart}`.trim();
-      }
-      result.flavor = flavour;
-    } else {
-      result.flavor = '';
-    }
+    result.flavor = this.composeFlavor(def.description?.flavor, trigger, location);
     // Detection applies to traps and caches alike: the Detection DC is the
     // passive Perception needed to notice it, and each hint tier has its own
     // DC (by default anchored to the Detection DC).

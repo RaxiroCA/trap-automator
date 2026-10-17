@@ -1,0 +1,252 @@
+<section class="ta-editor {{#if dirty}}is-dirty{{/if}}">
+  {{#if editor}}
+  <div class="ta-editor-scroll">
+    <header class="ta-hero">
+      <div class="ta-hero-icon" aria-hidden="true"><i class="fas {{editor.categoryIcon}}"></i></div>
+      <div class="ta-hero-body">
+        <h2 class="ta-hero-title">{{#if editor.name}}{{editor.name}}{{else}}New {{typeLabel}}{{/if}}</h2>
+        <div class="ta-hero-chips">
+          <span class="ta-pill ta-pill-{{editor.status}}"><i class="fas {{editor.statusIcon}}"></i> {{editor.statusLabel}}</span>
+          {{#if editor.hidden}}<span class="ta-pill ta-pill-hidden"><i class="fas fa-eye-slash"></i> Hidden when placing</span>{{/if}}
+          <span class="ta-pill"><i class="fas {{editor.categoryIcon}}"></i> {{editor.categoryLabel}}</span>
+          <span class="ta-pill" data-tooltip="Passive Perception needed to notice it"><i class="fas fa-eye"></i> Spot DC {{editor.defaultDetectionDC}}</span>
+          {{#if isTrap}}
+          <span class="ta-pill" data-tooltip="How the trap attacks"><i class="fas {{#if editor.isAttack}}fa-crosshairs{{else}}fa-shield-halved{{/if}}"></i> {{editor.mechanicSummary}}</span>
+          {{/if}}
+          <span class="ta-pill" data-tooltip="Hint sets to choose from"><i class="fas fa-dice-d20"></i> {{editor.sets.length}} hint set{{#unless (eq editor.sets.length 1)}}s{{/unless}}</span>
+        </div>
+      </div>
+      {{#if editor.canDuplicate}}
+      <button type="button" class="ta-btn ta-btn-quiet" data-action="duplicateEntry" data-tooltip="Start a new {{typeLabel}} from a copy of this one"><i class="fas fa-copy"></i> Duplicate</button>
+      {{/if}}
+    </header>
+
+    <section class="ta-card">
+      <header class="ta-card-head">
+        <i class="fas fa-scroll" aria-hidden="true"></i>
+        <div>
+          <h3>{{typeTitle}}</h3>
+          <p>What it's called and where it's listed when placing.</p>
+        </div>
+      </header>
+      <div class="ta-grid-2">
+        <label class="ta-field" for="ta-ed-name">
+          <span class="ta-field-label">Name</span>
+          <input type="text" id="ta-ed-name" data-field="name" value="{{editor.name}}" placeholder="e.g. Poison Needle" />
+        </label>
+        <label class="ta-field" for="ta-ed-category">
+          <span class="ta-field-label">Category</span>
+          <span class="ta-input-icon">
+            <i class="fas {{editor.categoryIcon}}" aria-hidden="true"></i>
+            <input type="text" id="ta-ed-category" data-field="category" value="{{editor.category}}" list="ta-ed-categories" placeholder="{{#if isTrap}}e.g. generic{{else}}optional{{/if}}" />
+          </span>
+          <datalist id="ta-ed-categories">
+            {{#each categories}}<option value="{{value}}">{{label}}</option>{{/each}}
+          </datalist>
+          <span class="ta-field-help">Pick one from the list or type a new category.</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="ta-card">
+      <header class="ta-card-head">
+        <i class="fas fa-quote-left" aria-hidden="true"></i>
+        <div>
+          <h3>{{#if isTrap}}When it springs{{else}}When it's found{{/if}}</h3>
+          <p>{{#if isTrap}}The text players read in chat when the trap goes off, and the result for each victim.{{else}}What the players find once they open it.{{/if}}</p>
+        </div>
+      </header>
+      {{#if isTrap}}
+      <label class="ta-field" for="ta-ed-flavor">
+        <span class="ta-field-label">What happens</span>
+        <textarea id="ta-ed-flavor" data-field="description.flavor" rows="3" placeholder="e.g. A needle jabs out of the lock!">{{editor.description.flavor}}</textarea>
+        <span class="ta-field-help">The opening "You &lt;trigger&gt; &lt;location&gt;." is added for you. Any <code>{trigger}</code> or <code>{location}</code> placeholders are removed.</span>
+      </label>
+      <figure class="ta-preview">
+        <figcaption><i class="fas fa-comment-dots"></i> Players will read, for example</figcaption>
+        <blockquote class="ta-preview-text">{{#if editor.preview}}{{editor.preview}}{{else}}Write a description to see what players will read.{{/if}}</blockquote>
+        <span class="ta-preview-note">Example uses the trigger "{{editor.previewTrigger}}" on the floor.</span>
+      </figure>
+      <div class="ta-grid-2">
+        <label class="ta-field ta-field-bad" for="ta-ed-fail">
+          <span class="ta-field-label"><i class="fas fa-burst"></i> Failed save / hit</span>
+          <input type="text" id="ta-ed-fail" data-field="description.fail" value="{{editor.description.fail}}" placeholder="e.g. The needle draws blood." />
+        </label>
+        <label class="ta-field ta-field-good" for="ta-ed-success">
+          <span class="ta-field-label"><i class="fas fa-shield"></i> Successful save / miss</span>
+          <input type="text" id="ta-ed-success" data-field="description.success" value="{{editor.description.success}}" placeholder="e.g. You snatch your hand back." />
+        </label>
+      </div>
+      {{else}}
+      <label class="ta-field" for="ta-ed-found">
+        <span class="ta-field-label">Contents</span>
+        <textarea id="ta-ed-found" data-field="description.found" rows="3" placeholder="e.g. A bundle of rations and a rusty key.">{{editor.description.found}}</textarea>
+      </label>
+      {{/if}}
+    </section>
+
+    <section class="ta-card">
+      <header class="ta-card-head">
+        <i class="fas fa-sliders" aria-hidden="true"></i>
+        <div>
+          <h3>Defaults when placing</h3>
+          <p>Filled in for you in the Shift+T dialog. You can still change them for each placement.</p>
+        </div>
+      </header>
+
+      <div class="ta-detect">
+        <label class="ta-field" for="ta-ed-detect">
+          <span class="ta-field-label"><i class="fas fa-eye"></i> Detection DC</span>
+          <span class="ta-stepper">
+            <button type="button" class="ta-icon-btn" data-action="stepField" data-field="defaultDetectionDC" data-step="-1" aria-label="Lower Detection DC"><i class="fas fa-minus"></i></button>
+            <input type="number" id="ta-ed-detect" min="1" max="40" data-field="defaultDetectionDC" data-dtype="Number" value="{{editor.defaultDetectionDC}}" />
+            <button type="button" class="ta-icon-btn" data-action="stepField" data-field="defaultDetectionDC" data-step="1" aria-label="Raise Detection DC"><i class="fas fa-plus"></i></button>
+          </span>
+          <span class="ta-field-help">Passive Perception needed to notice it. The four hints start here.</span>
+        </label>
+        <div class="ta-ladder" role="img" aria-label="Hint DCs {{#each editor.ladder.markers}}{{tier}} at DC {{dc}}{{#unless @last}}, {{/unless}}{{/each}}">
+          <div class="ta-ladder-track">
+            {{#each editor.ladder.bands}}
+            <span class="ta-ladder-band" style="left: {{pos}}%"><span class="ta-ladder-band-dc">{{dc}}</span><span class="ta-ladder-band-label">{{label}}</span></span>
+            {{/each}}
+            {{#each editor.ladder.markers}}
+            <span class="ta-ladder-marker ta-level-{{level}}" style="left: {{pos}}%" data-tooltip="Hint {{tier}}: visible at passive Perception {{dc}}+"><span>{{tier}}</span></span>
+            {{/each}}
+          </div>
+          <span class="ta-ladder-caption">5e DC scale · markers show where each hint becomes visible</span>
+        </div>
+      </div>
+
+      {{#if isTrap}}
+      <fieldset class="ta-segment" aria-label="How the trap attacks">
+        <label class="ta-segment-option {{#unless editor.isAttack}}active{{/unless}}" for="ta-ed-attack-save">
+          <input type="radio" id="ta-ed-attack-save" name="ta-ed-attack" value="save" data-field="attackType" {{#unless editor.isAttack}}checked{{/unless}} />
+          <i class="fas fa-shield-halved"></i>
+          <span class="ta-segment-title">Saving throw</span>
+          <span class="ta-segment-desc">Each victim rolls a save against a DC from the Monk's TokenBar card.</span>
+        </label>
+        <label class="ta-segment-option {{#if editor.isAttack}}active{{/if}}" for="ta-ed-attack-attack">
+          <input type="radio" id="ta-ed-attack-attack" name="ta-ed-attack" value="attack" data-field="attackType" {{#if editor.isAttack}}checked{{/if}} />
+          <i class="fas fa-crosshairs"></i>
+          <span class="ta-segment-title">Attack roll</span>
+          <span class="ta-segment-desc">The trap rolls d20 + bonus against each victim's AC. A natural 20 is a critical hit.</span>
+        </label>
+      </fieldset>
+
+      {{#if editor.isAttack}}
+      <div class="ta-grid-2">
+        <label class="ta-field" for="ta-ed-bonus">
+          <span class="ta-field-label"><i class="fas fa-crosshairs"></i> Attack bonus</span>
+          <span class="ta-stepper">
+            <button type="button" class="ta-icon-btn" data-action="stepField" data-field="defaultAttackBonus" data-step="-1" aria-label="Lower attack bonus"><i class="fas fa-minus"></i></button>
+            <input type="number" id="ta-ed-bonus" min="-5" max="30" data-field="defaultAttackBonus" data-dtype="Number" value="{{editor.defaultAttackBonus}}" />
+            <button type="button" class="ta-icon-btn" data-action="stepField" data-field="defaultAttackBonus" data-step="1" aria-label="Raise attack bonus"><i class="fas fa-plus"></i></button>
+          </span>
+          <span class="ta-field-help">The DMG suggests +3 to +5 for a setback and +6 to +8 for a dangerous trap.</span>
+        </label>
+      </div>
+      {{else}}
+      <div class="ta-grid-2">
+        <label class="ta-field" for="ta-ed-save">
+          <span class="ta-field-label"><i class="fas fa-person-running"></i> Save ability</span>
+          <select id="ta-ed-save" data-field="defaultSave">
+            {{#each editor.saveOptions}}<option value="{{value}}" {{#if selected}}selected{{/if}}>{{label}}</option>{{/each}}
+          </select>
+        </label>
+        <label class="ta-field" for="ta-ed-dc">
+          <span class="ta-field-label"><i class="fas fa-bullseye"></i> Save DC</span>
+          <span class="ta-stepper">
+            <button type="button" class="ta-icon-btn" data-action="stepField" data-field="defaultDC" data-step="-1" aria-label="Lower save DC"><i class="fas fa-minus"></i></button>
+            <input type="number" id="ta-ed-dc" min="1" max="30" data-field="defaultDC" data-dtype="Number" value="{{editor.defaultDC}}" />
+            <button type="button" class="ta-icon-btn" data-action="stepField" data-field="defaultDC" data-step="1" aria-label="Raise save DC"><i class="fas fa-plus"></i></button>
+          </span>
+          <span class="ta-field-help">The DMG suggests DC 10 to 11 for a setback and 12 to 15 for a dangerous trap.</span>
+        </label>
+      </div>
+      {{/if}}
+      {{/if}}
+    </section>
+
+    <section class="ta-card">
+      <header class="ta-card-head">
+        <i class="fas fa-lightbulb" aria-hidden="true"></i>
+        <div>
+          <h3>Hint sets</h3>
+          <p>Each time this {{typeLabel}} is placed, one set is picked at random and its four hints surround the tile. Players only see the hints their passive Perception reaches.</p>
+        </div>
+      </header>
+
+      {{#each editor.sets}}
+      <article class="ta-set" data-set="{{index}}" data-state="{{state}}">
+        <header class="ta-set-head">
+          <i class="fas fa-dice-d20" aria-hidden="true"></i>
+          <strong>Set {{number}}</strong>
+          <span class="ta-set-meter" data-tooltip="Hints filled in">
+            <span class="ta-set-meter-bar"><span class="ta-set-meter-fill" style="width: {{fillPct}}%"></span></span>
+            <span class="ta-set-meter-count">{{filledCount}}/4</span>
+          </span>
+          <span class="ta-set-actions">
+            <button type="button" class="ta-icon-btn" data-action="duplicateSet" data-tooltip="Duplicate this set" aria-label="Duplicate set {{number}}"><i class="fas fa-clone"></i></button>
+            {{#if canRemove}}
+            <button type="button" class="ta-icon-btn ta-danger" data-action="removeSet" data-tooltip="Remove this set" aria-label="Remove set {{number}}"><i class="fas fa-trash"></i></button>
+            {{/if}}
+          </span>
+        </header>
+        <ol class="ta-tiers">
+          {{#each tiers}}
+          <li class="ta-tier ta-level-{{level}} {{#if filled}}is-filled{{/if}}">
+            <label class="ta-tier-badge" for="{{id}}">
+              <span class="ta-tier-name">{{tier}}</span>
+              <span class="ta-tier-dc"><i class="fas fa-eye"></i> DC {{dc}}</span>
+            </label>
+            <span class="ta-tier-input">
+              <input type="text" id="{{id}}" data-field="{{field}}" value="{{value}}" placeholder="{{purpose}}" />
+            </span>
+            <i class="fas fa-circle-check ta-tier-ok" aria-hidden="true"></i>
+          </li>
+          {{/each}}
+        </ol>
+      </article>
+      {{/each}}
+      <button type="button" class="ta-add-set" data-action="addSet"><i class="fas fa-plus"></i> Add another hint set</button>
+    </section>
+  </div>
+
+  <footer class="ta-actionbar">
+    <div class="ta-issues" data-count="{{editor.issues.length}}" {{#unless editor.issues.length}}hidden{{/unless}}>
+      <details>
+        <summary><i class="fas fa-triangle-exclamation"></i> <span class="ta-issues-label">{{editor.issues.length}} thing{{#unless (eq editor.issues.length 1)}}s{{/unless}} to fix before saving</span></summary>
+        <ul>{{#each editor.issues}}<li>{{this}}</li>{{/each}}</ul>
+      </details>
+    </div>
+    <span class="ta-save-state" data-state="{{#if dirty}}dirty{{else}}clean{{/if}}">
+      {{#if dirty}}<i class="fas fa-circle-exclamation"></i> Unsaved changes{{else}}<i class="fas fa-circle-check"></i> All changes saved{{/if}}
+    </span>
+    <span class="ta-actionbar-spacer"></span>
+    {{#if editor.canHide}}
+    <button type="button" class="ta-btn ta-btn-quiet" data-action="toggleHidden" data-key="{{editor.key}}">
+      {{#if editor.hidden}}<i class="fas fa-eye"></i> Show when placing{{else}}<i class="fas fa-eye-slash"></i> Hide when placing{{/if}}
+    </button>
+    {{/if}}
+    {{#if editor.canRevert}}
+    <button type="button" class="ta-btn ta-btn-quiet" data-action="revertEntry"><i class="fas fa-rotate-left"></i> Revert to built-in</button>
+    {{/if}}
+    {{#if editor.canDelete}}
+    <button type="button" class="ta-btn ta-btn-danger" data-action="deleteEntry"><i class="fas fa-trash"></i> Delete</button>
+    {{/if}}
+    <button type="button" class="ta-btn ta-btn-primary" data-action="saveEntry" data-tooltip="Save (Ctrl+S)"><i class="fas fa-floppy-disk"></i> Save</button>
+  </footer>
+  {{else}}
+  <div class="ta-empty">
+    <div class="ta-empty-icon" aria-hidden="true"><i class="fas fa-dungeon"></i></div>
+    <h2>Pick a {{typeLabel}} to edit</h2>
+    <p>Choose one from the list to change its text, its defaults and its four hints, or create your own.</p>
+    <ul class="ta-empty-tips">
+      <li><i class="fas fa-book"></i><span><strong>Built-in</strong> entries ship with the module. Your edits are saved separately and can be reverted.</span></li>
+      <li><i class="fas fa-eye-slash"></i><span>Use the <strong>eye</strong> to hide an entry from the placement menus without deleting it.</span></li>
+      <li><i class="fas fa-file-export"></i><span><strong>Export</strong> backs up everything you've customised, and <strong>Import</strong> loads it into another world.</span></li>
+    </ul>
+    <button type="button" class="ta-btn ta-btn-primary" data-action="newEntry"><i class="fas fa-plus"></i> New {{typeLabel}}</button>
+  </div>
+  {{/if}}
+</section>

@@ -1,0 +1,68 @@
+<aside class="ta-sidebar">
+  <nav class="ta-tabs" aria-label="Definition type">
+    {{#each tabs}}
+    <button type="button" class="ta-tab {{#if active}}active{{/if}}" data-action="switchType" data-type="{{type}}" aria-pressed="{{#if active}}true{{else}}false{{/if}}">
+      <i class="fas {{icon}}"></i>
+      <span>{{label}}</span>
+      <span class="ta-tab-count">{{count}}</span>
+    </button>
+    {{/each}}
+  </nav>
+
+  <div class="ta-search">
+    <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+    <input type="search" id="ta-manager-search" placeholder="Search {{typeLabel}}s by name or category" value="{{filter}}" aria-label="Search {{typeLabel}}s" />
+    <button type="button" class="ta-search-clear ta-icon-btn" data-action="clearSearch" data-tooltip="Clear search" aria-label="Clear search" hidden><i class="fas fa-xmark"></i></button>
+  </div>
+
+  <div class="ta-chips" role="group" aria-label="Filter by status">
+    {{#each filters}}
+    <button type="button" class="ta-chip {{#if active}}active{{/if}}" data-action="setStatusFilter" data-status="{{id}}" aria-pressed="{{#if active}}true{{else}}false{{/if}}">
+      <i class="fas {{icon}}"></i> {{label}} <span class="ta-chip-count">{{count}}</span>
+    </button>
+    {{/each}}
+  </div>
+
+  <div class="ta-list" role="list">
+    {{#each groups}}
+    <details class="ta-group" data-category="{{category}}" {{#if open}}open{{/if}}>
+      <summary>
+        <i class="fas fa-chevron-right ta-group-chevron" aria-hidden="true"></i>
+        <i class="fas {{icon}} ta-group-icon" aria-hidden="true"></i>
+        <span class="ta-group-label">{{label}}</span>
+        <span class="ta-group-count">{{count}}</span>
+      </summary>
+      <ol>
+        {{#each items}}
+        <li class="ta-row {{#if selected}}selected{{/if}} {{#if hidden}}is-hidden{{/if}}" data-key="{{key}}" data-status="{{status}}" data-search="{{search}}">
+          <button type="button" class="ta-row-main" data-action="selectEntry" aria-current="{{#if selected}}true{{else}}false{{/if}}">
+            <i class="fas {{kindIcon}} ta-row-kind" data-tooltip="{{kindTip}}" aria-hidden="true"></i>
+            <span class="ta-row-name">{{name}}</span>
+            <span class="ta-row-hidden-tag" {{#unless hidden}}hidden{{/unless}}>Hidden</span>
+            <span class="ta-status ta-status-{{status}}" data-tooltip="{{statusTip}}"><i class="fas {{statusIcon}}"></i><span class="ta-sr">{{statusLabel}}</span></span>
+          </button>
+          <button type="button" class="ta-row-eye ta-icon-btn {{#if hidden}}is-active{{/if}}" data-action="toggleHidden"
+            aria-pressed="{{#if hidden}}true{{else}}false{{/if}}"
+            aria-label="{{#if hidden}}Show when placing{{else}}Hide when placing{{/if}}"
+            data-tooltip="{{#if hidden}}Hidden from the placement menus. Click to show it again.{{else}}Shown in the placement menus. Click to hide it.{{/if}}">
+            <i class="fas {{#if hidden}}fa-eye-slash{{else}}fa-eye{{/if}}"></i>
+          </button>
+        </li>
+        {{/each}}
+      </ol>
+    </details>
+    {{/each}}
+    <div class="ta-list-empty" hidden>
+      <i class="fas fa-filter-circle-xmark"></i>
+      <p>No {{typeLabel}}s match. Try another search or filter.</p>
+    </div>
+  </div>
+
+  <footer class="ta-sidebar-footer">
+    <button type="button" class="ta-btn ta-btn-primary" data-action="newEntry"><i class="fas fa-plus"></i> New {{typeLabel}}</button>
+    <div class="ta-sidebar-io">
+      <button type="button" class="ta-btn ta-btn-quiet" data-action="exportDefs" data-tooltip="Download all your customisations as a JSON file"><i class="fas fa-file-export"></i> Export</button>
+      <button type="button" class="ta-btn ta-btn-quiet" data-action="importDefs" data-tooltip="Load customisations from a JSON export"><i class="fas fa-file-import"></i> Import</button>
+    </div>
+  </footer>
+</aside>

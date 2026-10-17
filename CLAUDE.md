@@ -9,7 +9,7 @@ Guidance for working on **The Horse's Trap Automator**, a Foundry VTT module for
 | `module.json` | Foundry manifest: id `trap-automator`, version, compatibility (min 13, verified 14), packs, required modules. |
 | `scripts/trap-automator.js` | Main runtime code: the `TrapAutomator` class plus `init`/`ready` hooks and the MATT/TokenBar hooks. Imports `trap-manager.js`. Plain ES modules with no build step and no dependencies. |
 | `scripts/trap-manager.js` | `TrapManager` (ApplicationV2 + HandlebarsApplicationMixin), the **Trap Manager** settings menu for editing trap/cache types and their hint sets. |
-| `templates/trap-manager.hbs`, `styles/trap-automator.css` | Trap Manager template and styles (`styles` is declared in `module.json`). |
+| `templates/trap-manager-sidebar.hbs`, `templates/trap-manager-editor.hbs`, `styles/trap-automator.css` | Trap Manager templates (one per ApplicationV2 part) and styles (`styles` is declared in `module.json`). |
 | `definitions/builtin-defs.json` | Built-in trap and cache definitions (71 traps, 17 caches), fetched at `ready`. |
 | `packs/horses-actors/` | LevelDB compendium: `Hint +2/+4/+6/+10` (npc) and `Loot` (Item Piles actor). |
 | `packs/horses-macros/` | LevelDB compendium: `Trap Trigger` (legacy resolution macro, **no longer used**), `Clear Banked Perception`, `Clear Banked Stealth` (Stealthy helpers). |
@@ -56,7 +56,7 @@ Built by `buildTrapData()`: `name`, `type` (`trap`|`cache`), `flavor`, `detectio
 - The Add/Edit Trap forms read and write the optional defaults with `_renderTrapDefaultsFields` / `_readTrapDefaultsFields`. Nine built-in single-strike traps (turrets, blades, pendulums, snakes) are `attack` at +5; the rest are saves.
 - `hints[loc]` may also use a legacy shape, `{ "+2": [..], "+4": [..] }`. Both `getHints()` and the edit forms accept either.
 - Primary categories are `generic`, `sci-fi`, `magical`, `natural` and `grimdark`. `categorizeCategory()` maps a category to `{primary, sub}`: first via custom `categories`, then a hard-coded grimdark sub-category list, then regexes, and anything left over becomes `generic` (for example `misc`).
-- `{trigger}` and `{location}` placeholders in `flavor` are stripped by `cleanFlavorText()`, and the final text is rebuilt as `You <trigger> <location phrase>. <description>`.
+- `{trigger}` and `{location}` placeholders in `flavor` are stripped by `cleanFlavorText()`, along with lead-in clauses ("As {trigger} is tripped,") and the preposition in front of the location ("out of the {location}"). A location used as a noun ("the {location} splits open") becomes "the surface". `composeFlavor()` then builds `You <trigger> <location phrase>. <description>`. After changing `cleanFlavorText()`, run every built-in flavour through it and check for leftovers such as "the !" or "As ,".
 
 ## Conventions
 
@@ -73,7 +73,11 @@ Built by `buildTrapData()`: `name`, `type` (`trap`|`cache`), `flavor`, `detectio
 - `TrapManager` lists `builtinDefs[type]` plus `customDefs[type]`. Status is *builtin*, *modified* (a built-in with an override in `customDefs`) or *custom*. The effective definition is `mergeObject(builtin, override)`, the same way `rebuildDefinitions()` combines them: objects merge and arrays (hint sets) replace.
 - It edits a **draft** (`_draftFromDef`). Inputs carry `data-field` paths (for example `sets.0.+2` or `description.flavor`) and are copied into the draft on input, so re-renders keep unsaved text. `_buildDefinition` validates the draft and writes the same hint sets to all four locations (built-in hints are identical per location).
 - Every write goes through `automator.saveCustomDefinitions()`, so live definitions rebuild immediately. Hide/unhide edits `customDefs.hidden`; revert/delete removes `customDefs[type][key]`.
-- Actions are private static methods wired through `DEFAULT_OPTIONS.actions` (`this` is the app). Search filters the list in the DOM rather than re-rendering, so the input keeps focus.
+- Actions are private static methods wired through `DEFAULT_OPTIONS.actions` (`this` is the app).
+- **Two parts**, `sidebar` and `editor`, each with its own scroll container (`scrollable` in `PARTS`). The window content is a flex row with `overflow: hidden`, and each pane scrolls on its own. **Don't re-render the sidebar for row-level changes:** selecting (`_updateRowSelection`), hiding (`_updateRowHidden`), searching and status filters (`_applyFilters`) update the DOM in place so the list never jumps. Editor changes use `this.render({ parts: ['editor'] })`. Only type switches, saves, deletes, reverts and imports re-render both parts.
+- Typing updates the draft and the live feedback without re-rendering (`_liveUpdate`): the title, the flavour preview (`automator.composeFlavor`, the same function `buildTrapData` uses), the per-set completeness meter and the issues list. Fields that change the layout (attack type, DCs, save, category) re-render the editor on `change`.
+- Foundry gives buttons and flex rows its own `display`, which overrides the `hidden` attribute, so the stylesheet forces `.ta-manager [hidden] { display: none !important }`. Keep it.
+- Styling uses `--ta-*` tokens on `.ta-manager`, dark by default with overrides for `.theme-light`. Use the tokens rather than literal colours.
 
 ## Working with the compendium packs
 
